@@ -142,51 +142,33 @@ def extract_reply_only(raw_text: str) -> str:
     return text
 
 def clean_json_response(raw_text: str) -> str:
-    """Clean and extract JSON from AI response (Robust Version)"""
+    """Clean and extract JSON from AI response"""
     if not raw_text:
         return ""
 
-    # 1. Remove Markdown code blocks first
-    text = re.sub(r"```json\s*", "", raw_text)
-    text = re.sub(r"```\s*", "", text)
-    
-    # 2. Find the outer-most JSON object
-    # Tìm cặp ngoặc nhọn ngoài cùng
-    json_match = re.search(r"\{[\s\S]*\}", text)
+    json_match = re.search(r"{[\s\S]*}", raw_text)
     if not json_match:
-        # Fallback: thử tìm mảng [] nếu không thấy object {}
-        json_match = re.search(r"\[[\s\S]*\]", text)
-    
-    if not json_match:
-        print(f"❌ Không tìm thấy cấu trúc JSON. Raw: {raw_text[:100]}...")
+        print("❌ Không tìm thấy JSON trong output AI")
         return ""
 
     json_text = json_match.group(0).strip()
     
-    # 3. Clean control characters & Smart Quotes
-    # Xóa các ký tự điều khiển lạ, giữ lại newline cơ bản nếu cần thiết
-    json_text = re.sub(r"[\x00-\x1F\x7F]", " ", json_text) 
-    
-    # SỬA LỖI: Thay thế smart quotes (dấu nháy cong) bằng dấu nháy thẳng
-    json_text = json_text.replace('“', '"').replace('”', '"')
-    
-    # 4. Handle LaTeX Backslash Issues (Quan trọng cho Toán)
-    # AI thường trả về "\frac" (lỗi JSON) thay vì "\\frac" (đúng JSON).
-    # Regex này tìm các dấu \ KHÔNG đi kèm với các ký tự thoát hợp lệ của JSON.
-    # Các ký tự thoát JSON hợp lệ: " \ / b f n r t u
-    # Chúng ta loại 'f' ra khỏi danh sách hợp lệ để bắt được \frac -> biến thành \\frac
-    # Pattern: Tìm \ mà phía sau KHÔNG LÀ [" \ / b n r t u]
-    try:
-        # Thử parse trước, nếu được thì trả về luôn
-        json.loads(json_text)
-        return json_text
-    except json.JSONDecodeError:
-        # Nếu lỗi, thử sửa các dấu backslash thiếu escape
-        # Ví dụ: \lim -> \\lim, \frac -> \\frac, \infty -> \\infty
-        # Nhưng giữ nguyên \n, \t, \", \\
-        pattern = r'\\(?![\\"/bnrtu])'
-        fixed_text = re.sub(pattern, r'\\\\', json_text)
-        return fixed_text
+    # Clean control characters
+    json_text = re.sub(r"[\x00-\x1F\x7F]", " ", json_text)
+    json_text = re.sub(r"[\U00010000-\U0010ffff]", "", json_text)
+    json_text = json_text.replace(""", "\"").replace(""", "\"")
+    json_text = json_text.replace("\n", " ").replace("\t", " ")
+    json_text = json_text.replace("\\n", " ").replace("\\t", " ")
+
+    if json_text.startswith("```json"):
+        json_text = json_text[7:]
+    elif json_text.startswith("```"):
+        json_text = json_text[3:]
+    if json_text.endswith("```"):
+        json_text = json_text[:-3]
+
+    return json_text.strip()
+
 # ===== SCHEMAS =====
 
 class MediaPart(BaseModel):
@@ -615,17 +597,16 @@ JSON BẮT BUỘC:
 }}"""
 
         response = model.generate_content(prompt)
-        raw_text = response.text
+        raw = response.text
 
         try:
-            json_text = clean_json_response(raw_text)
+            json_text = clean_json_response(raw)
             if not json_text:
                 raise ValueError("Không tìm thấy JSON hợp lệ")
             data = json.loads(json_text)
         except Exception as e:
-            print(f"❌ NODE TEST JSON ERROR: {e}")
-            print(f"❌ Raw text: {raw_text}")
-            raise HTTPException(status_code=500, detail=f"AI trả về JSON không hợp lệ: {str(e)}")
+            print(f"❌ JSON ERROR: {e}")
+            raise HTTPException(status_code=500, detail="AI trả về JSON không hợp lệ")
         
         if "parts" not in data:
             raise HTTPException(status_code=500, detail="Thiếu 'parts' trong JSON")
@@ -655,7 +636,6 @@ async def handle_generate_test(request: GenerateTestInput):
                 for d in docs:
                     context_text += f"- {d['content']}\n"
 
-        # Prompt đã được tối ưu
         prompt = f"""Tạo đề kiểm tra TOÁN 12 về: "{request.topic}"
 Độ khó: {request.difficulty}
 
@@ -684,26 +664,18 @@ JSON (KHÔNG markdown):
 }}"""
         
         response = model.generate_content(prompt)
-        raw_text = response.text
         
         try:
-            json_text = clean_json_response(raw_text)
+            json_text = clean_json_response(response.text)
             if not json_text:
-                raise ValueError("Không trích xuất được JSON từ phản hồi của AI")
-            
+                raise ValueError("Không tìm thấy JSON hợp lệ")
             result = json.loads(json_text)
         except json.JSONDecodeError as e:
             print(f"❌ JSON parse error: {e}")
-            print(f"❌ Raw text causing error: {raw_text}") # In ra để debug
-            # Fallback: Trả về lỗi 500 nhưng có thông tin
-            raise HTTPException(status_code=500, detail=f"Lỗi đọc dữ liệu từ AI: {str(e)}")
-        except ValueError as e:
-            print(f"❌ Value error: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-            
+            raise HTTPException(status_code=500, detail="AI trả về dữ liệu không hợp lệ")
+        
         if "parts" not in result:
-             # Đôi khi AI trả về cấu trúc khác, thử mapping lại nếu có thể hoặc báo lỗi
-            raise HTTPException(status_code=500, detail="AI trả về thiếu trường 'parts'")
+            raise HTTPException(status_code=500, detail="Thiếu 'parts'")
         
         return {
             "topic": request.topic,
