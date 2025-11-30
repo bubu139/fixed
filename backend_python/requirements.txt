@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+uvicorn
+pydantic
+genkit
+google-genai
+python-dotenv
+google-generativeai
+python-docx
+PyPDF2
+python-multipart
+
+aiofiles
+supabase
+flask-cors
+
