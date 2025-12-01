@@ -1,2 +1,6 @@
-// Ưu tiên biến môi trường, nếu không có thì dùng link Render cứng
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://final-h94w.onrender.com";
+// Ưu tiên NEXT_PUBLIC_API_BASE_URL; nếu chưa đặt sẽ rơi về NEXT_PUBLIC_API_URL hoặc localhost để tránh crash
+const FALLBACK_API_BASE_URL = 'http://localhost:8000';
+export const API_BASE_URL =
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  FALLBACK_API_BASE_URL;

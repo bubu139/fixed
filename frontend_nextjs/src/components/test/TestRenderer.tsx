@@ -1,18 +1,19 @@
 'use client';
 
 import { updateNodeScore } from "@/lib/nodeProgressApi";
+import { API_BASE_URL } from '@/lib/utils';
 import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/supabase/auth/use-user';
 import { useSupabase } from '@/supabase';
 import { TestHistoryService } from '@/services/test-history.service';
 import type { Test, Question } from '@/types/test-schema';
-import type { 
-  TestAttempt, 
-  WeakTopic, 
-  TestDifficulty, 
-  TestAnswer 
-} from '@/types/test-history'; 
+import type {
+  TestAttempt,
+  WeakTopic,
+  TestDifficulty,
+  TestAnswer
+} from '@/types/test-history';
 import { QuestionComponent } from './Question';
 import { TestResultDetail } from './TestResultDetail';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,7 +54,6 @@ interface TestResultState {
   aiAnalysis: AiAnalysisResult;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export function TestRenderer({
   testData,
