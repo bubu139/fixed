@@ -18,6 +18,29 @@ import { MindmapInsightPayload, upsertMindmapInsights } from '@/lib/mindmap-stor
 // 🔥 UPDATE: Import Modal Camera mới
 import { CameraCaptureDialog } from '@/components/chat/CameraCaptureDialog';
 
+const getReadableError = (err: unknown): string => {
+  if (!err) return 'Đã có lỗi xảy ra.';
+  if (typeof err === 'string') return err;
+  if (Array.isArray(err)) {
+    const messages = err
+      .map(item => getReadableError(item))
+      .filter(Boolean);
+    return messages.join('; ');
+  }
+  if (typeof err === 'object') {
+    const anyErr = err as Record<string, unknown>;
+    if (typeof anyErr.message === 'string') return anyErr.message;
+    if (anyErr.detail) return getReadableError(anyErr.detail);
+    if (anyErr.error) return getReadableError(anyErr.error);
+    try {
+      return JSON.stringify(anyErr);
+    } catch {
+      return 'Đã có lỗi xảy ra.';
+    }
+  }
+  return 'Đã có lỗi xảy ra.';
+};
+
 // --- CÁC TYPE VÀ INTERFACE (GIỮ NGUYÊN) ---
 type Message = {
   text: string;
@@ -202,7 +225,7 @@ export default function ChatPage() {
             let errorText = 'Đã có lỗi xảy ra.';
             try {
                 const errJson = await response.json();
-                errorText = errJson.detail || errJson.error || errorText;
+                errorText = getReadableError(errJson.detail ?? errJson.error ?? errJson);
             } catch {}
             throw new Error(errorText);
         }
@@ -253,7 +276,8 @@ export default function ChatPage() {
         }
     } catch (error: any) {
         console.error('Lỗi Chat:', error);
-        setMessages(prev => [...prev, { text: `Lỗi: ${error.message}`, isUser: false }]);
+        const message = getReadableError(error);
+        setMessages(prev => [...prev, { text: `Lỗi: ${message}`, isUser: false }]);
     } finally {
         setIsLoading(false);
     }
