@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import { MathInput } from '@/components/ui/math-input';
 import { MathfieldElement } from 'mathlive';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { API_BASE_URL } from '@/lib/utils';
+import { API_URL } from '@/lib/utils';
 import { GeoGebraModal } from '@/components/chat/GeoGebraModal';
 import Link from 'next/link';
 import { MindmapInsightPayload, upsertMindmapInsights } from '@/lib/mindmap-storage';
@@ -63,7 +63,7 @@ type GeogebraSuggestion = {
 
 const updateNodeScore = async (nodeId: string, score: number) => {
   try {
-    const res = await fetch(`${API_BASE_URL}/updateScore`, {
+    const res = await fetch(`${API_URL}/updateScore`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ nodeId, score }),
@@ -192,7 +192,7 @@ export default function ChatPage() {
     try {
         const media = currentFiles.map(file => ({ url: file.content }));
 
-        const response = await fetch(`${API_BASE_URL}/api/chat`, {
+        const response = await fetch(`${API_URL}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: apiMessage, media, history: historyPayload }),

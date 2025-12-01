@@ -7,7 +7,7 @@ import type { Test } from '@/types/test-schema';
 import { TestRenderer } from '@/components/test/TestRenderer';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
-import { API_BASE_URL } from '@/lib/utils';
+import { API_URL } from '@/lib/utils';
 
 // ----------- GIỮ NGUYÊN MAPPING CŨ -----------
 const testTitles: { [key: string]: string } = {
@@ -47,13 +47,13 @@ export default function TestPageContent() {
             try {
                 let response;
                 let body: any = {}; // 👈 Tạo body request
-                let endpoint = `${API_BASE_URL}/api/generate-test`; // 👈 Endpoint mặc định
+                let endpoint = `${API_URL}/api/generate-test`; // 👈 Endpoint mặc định
 
                 // Trường hợp 1: Test từ Node Mindmap
                 if (nodeId && nodeTitle) {
                     // *** LƯU Ý: File custom-node-test/page.tsx của bạn đang gọi /api/generate-node-test
                     // *** Chúng ta sẽ hợp nhất logic đó vào đây, sử dụng endpoint /api/generate-test
-                    endpoint = `${API_BASE_URL}/api/generate-test`; // (File này đang dùng endpoint khác, nhưng ta sẽ dùng endpoint chung)
+                    endpoint = `${API_URL}/api/generate-test`; // (File này đang dùng endpoint khác, nhưng ta sẽ dùng endpoint chung)
                     body = {
                         topic: nodeTitle,
                         testType: "node", // 👈 Loại test mới

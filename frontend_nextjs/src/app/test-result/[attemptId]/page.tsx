@@ -12,7 +12,7 @@ import { TestResultDetail } from '@/components/test/TestResultDetail';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Loader, AlertTriangle } from 'lucide-react';
 import Link from 'next/link';
-import { API_BASE_URL } from '@/lib/utils';
+import { API_URL } from '@/lib/utils';
 
 export default function TestResultPage() {
   const params = useParams();
@@ -78,7 +78,7 @@ export default function TestResultPage() {
         setWeakTopics(analysis.weakTopics);
         
         // Re-generate test data (hoặc load từ cache nếu có)
-        const response = await fetch(`${API_BASE_URL}/api/generate-test`, {
+        const response = await fetch(`${API_URL}/api/generate-test`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 

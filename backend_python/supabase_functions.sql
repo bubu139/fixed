@@ -63,6 +63,7 @@ create table if not exists node_progress (
   id uuid default uuid_generate_v4() primary key,
   user_id uuid references auth.users(id) not null,
   node_id text not null,
+  opened boolean default false,
   score float,
   status text default 'learning', -- 'learning', 'mastered'
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null,

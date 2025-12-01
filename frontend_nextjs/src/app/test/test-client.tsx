@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { API_BASE_URL } from "@/lib/utils";
+import { API_URL } from "@/lib/utils";
 import { TestRenderer } from "@/components/test/TestRenderer";
 import { Loader, AlertTriangle, ArrowLeft } from "lucide-react";
 import Link from "next/link";
@@ -28,7 +28,7 @@ export default function NodeTestPage() {
         const fetchTest = async () => {
             try {
                 setLoading(true);
-                const res = await fetch(`${API_BASE_URL}/api/generate-node-test`, {
+                const res = await fetch(`${API_URL}/api/generate-node-test`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ topic: title })

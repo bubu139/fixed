@@ -9,7 +9,7 @@ import { MindMapNode } from '@/types/mindmap';
 import ReactMarkdown from 'react-markdown';
 import { Loader, Sparkles, PencilRuler, BrainCircuit } from 'lucide-react';
 import { Separator } from '../ui/separator';
-import { API_BASE_URL } from '@/lib/utils';
+import { API_URL } from '@/lib/utils';
 // 🔥 FIX 1: Import API trực tiếp thay vì hook cũ
 import { openNode, type NodeProgress } from "@/lib/nodeProgressApi";
 import { useUser } from "@/supabase/auth/use-user"; // Import hook user nếu có, hoặc dùng context
@@ -62,7 +62,7 @@ export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: Nod
       const fetchSummary = async () => {
         setIsSummaryLoading(true);
         try {
-          const response = await fetch(`${API_BASE_URL}/api/summarize-topic`, {
+          const response = await fetch(`${API_URL}/api/summarize-topic`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ topic: node.label }),
@@ -85,7 +85,7 @@ export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: Nod
   const handleGenerateExercises = async () => {
     setIsExercisesLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/generate-exercises`, {
+      const response = await fetch(`${API_URL}/api/generate-exercises`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ topic: node.label }),
