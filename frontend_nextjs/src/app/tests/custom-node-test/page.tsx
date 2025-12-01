@@ -3,7 +3,7 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Loader } from "lucide-react";
-import { API_BASE_URL } from "@/lib/utils";
+import { API_URL } from "@/lib/utils";
 import { TestRenderer } from "@/components/test/TestRenderer";
 import type { Test } from "@/types/test-schema";
 
@@ -27,7 +27,7 @@ export default function CustomNodeTestPage() {
       setLoading(true);
       try {
         // 👇 Sửa API endpoint và body
-        const res = await fetch(`${API_BASE_URL}/api/generate-test`, { // Sửa endpoint
+        const res = await fetch(`${API_URL}/api/generate-test`, { // Sửa endpoint
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 

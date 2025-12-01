@@ -13,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { Loader, AlertTriangle, Target, ArrowLeft, Sparkles } from 'lucide-react';
 import Link from 'next/link';
-import { API_BASE_URL } from '@/lib/utils';
+import { API_URL } from '@/lib/utils';
 
 export default function AdaptiveTestContent() {
   const router = useRouter();
@@ -72,7 +72,7 @@ export default function AdaptiveTestContent() {
         setWeakTopics(topicsToFocus);
 
         // Generate adaptive test
-        const response = await fetch(`${API_BASE_URL}/api/generate-adaptive-test`, {
+        const response = await fetch(`${API_URL}/api/generate-adaptive-test`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

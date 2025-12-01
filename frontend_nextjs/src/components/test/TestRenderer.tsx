@@ -20,6 +20,7 @@ import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AlertCircle, Loader, ChevronLeft, ChevronRight } from 'lucide-react';
+import { API_URL } from "@/lib/utils";
 
 function normalizeType(type: string) {
   const t = type?.toLowerCase() || "";
@@ -52,8 +53,6 @@ interface TestResultState {
   weakTopics: WeakTopic[];
   aiAnalysis: AiAnalysisResult;
 }
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 export function TestRenderer({
   testData,
@@ -251,7 +250,7 @@ export function TestRenderer({
 
       console.log('📊 Gửi dữ liệu để AI phân tích:', analysisRequest);
       
-      const response = await fetch(`${API_BASE_URL}/api/analyze-test-result`, {
+      const response = await fetch(`${API_URL}/api/analyze-test-result`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(analysisRequest),
