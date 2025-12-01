@@ -9,10 +9,9 @@ from src.routes.node_progress import router as node_progress_router
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Literal, Optional
-import PyPDF2
-from docx import Document
 from src.models import NodeProgress
 from src.supabase_client import supabase
+from src.utils.file_utils import extract_text_from_file
 
 # Import config
 from src.ai_config import genai
@@ -33,46 +32,6 @@ app.add_middleware(
 
 # Thêm router node progress
 app.include_router(node_progress_router)
-
-# ===== DOCUMENT PROCESSING =====
-
-def extract_text_from_pdf(pdf_path: str) -> str:
-    """Extract text from a PDF file"""
-    try:
-        with open(pdf_path, 'rb') as file:
-            pdf_reader = PyPDF2.PdfReader(file)
-            text = ""
-            for page in pdf_reader.pages:
-                text += page.extract_text() + "\n"
-        return text
-    except Exception as e:
-        print(f"Error reading PDF {pdf_path}: {e}")
-        return ""
-
-def extract_text_from_word(docx_path: str) -> str:
-    """Extract text from a Word (.docx) file"""
-    try:
-        doc = Document(docx_path)
-        text = ""
-        for paragraph in doc.paragraphs:
-            text += paragraph.text + "\n"
-        return text
-    except Exception as e:
-        print(f"Error reading Word file {docx_path}: {e}")
-        return ""
-
-def extract_text_from_file(file_path: str) -> str:
-    """Extract text from PDF or Word file based on extension"""
-    file_path_obj = Path(file_path)
-    extension = file_path_obj.suffix.lower()
-    
-    if extension == '.pdf':
-        return extract_text_from_pdf(file_path)
-    elif extension in ['.docx', '.doc']:
-        return extract_text_from_word(file_path)
-    else:
-        print(f"Unsupported file format: {extension}")
-        return ""
 
 def load_reference_materials(folder_path: str, max_files: int = 5) -> str:
     """Load and combine text from multiple PDF/Word files in a folder"""
