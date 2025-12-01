@@ -72,6 +72,9 @@ async def process_document(user_id: str, document_id: str, purpose: str = "chat"
     purpose: 'chat' (user_documents) or 'test' (test_materials)
     """
     try:
+        if supabase is None:
+            print("[MathMentor] Supabase client missing; cannot process documents.")
+            return False
         # 1. Determine tables based on purpose
         if purpose == "chat":
             meta_table = "user_documents"
@@ -179,6 +182,9 @@ async def search_similar_documents(query: str, user_id: str, purpose: str = "cha
     Search for similar documents using vector similarity
     """
     try:
+        if supabase is None:
+            print("[MathMentor] Supabase client missing; skip vector search.")
+            return []
         # 1. Generate query embedding
         query_embedding = await generate_embedding(query)
         if not query_embedding:
@@ -196,7 +202,7 @@ async def search_similar_documents(query: str, user_id: str, purpose: str = "cha
         
         response = supabase.rpc(rpc_name, params).execute()
         return response.data if response.data else []
-        
+
     except Exception as e:
         print(f"Error searching documents: {e}")
         return []
