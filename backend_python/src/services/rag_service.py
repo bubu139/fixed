@@ -187,9 +187,11 @@ async def _search_similar_documents_from_db(
     for row in results:
         if row.get("purpose") and row.get("purpose") != purpose:
             continue
+        title = row.get("title") or row.get("file_name") or ""
         formatted_results.append(
             {
-                "file_name": row.get("file_name") or row.get("title") or "",
+                "title": title,
+                "file_name": row.get("file_name") or title,
                 "content": row.get("content", ""),
                 "score": float(row.get("similarity", 0)),
             }
