@@ -8,6 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from src.routes.node_progress import router as node_progress_router
+from src.routes.video import router as video_router
+from src.db import init_db
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Literal, Optional, Tuple
@@ -34,6 +36,12 @@ app.add_middleware(
 
 # Thêm router node progress
 app.include_router(node_progress_router)
+app.include_router(video_router)
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    init_db()
 
 def load_reference_materials(folder_path: str, max_files: int = 5) -> str:
     """Load and combine text from multiple PDF/Word files in a folder"""
