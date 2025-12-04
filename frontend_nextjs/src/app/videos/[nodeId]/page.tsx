@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
-import { API_BASE_URL } from "@/lib/utils";
 import {
   Gauge,
   Loader2,
@@ -28,27 +27,17 @@ type SegmentState = {
   videoUrl?: string;
 };
 
-type VideoSegmentApi = {
-  id: string;
-  segment_index: number;
-  start_second: number;
-  end_second: number;
-  status: "pending" | "processing" | "done" | "failed";
-  video_url?: string | null;
-};
-
-type NodeVideoResponse = {
-  id: string;
-  segments?: VideoSegmentApi[];
-};
+const DEMO_VIDEO_URL = "https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4";
 
 export default function LectureVideoPage() {
   const params = useParams<{ nodeId: string }>();
   const searchParams = useSearchParams();
   const topicTitle = searchParams.get("title") ?? "Bài giảng";
 
-  const [videoId, setVideoId] = useState<string | null>(null);
-  const [segments, setSegments] = useState<SegmentState[]>([]);
+  const [segments, setSegments] = useState<SegmentState[]>([
+    { index: 0, start: 0, end: 30, status: "ready", videoUrl: DEMO_VIDEO_URL },
+    { index: 1, start: 30, end: 60, status: "pending" },
+  ]);
   const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playback, setPlayback] = useState({
@@ -61,84 +50,6 @@ export default function LectureVideoPage() {
 
   const currentSegment = useMemo(() => segments[currentSegmentIndex], [segments, currentSegmentIndex]);
   const nextSegment = segments[currentSegmentIndex + 1];
-  const hasGenerating = useMemo(
-    () => segments.some((segment) => segment.status === "generating"),
-    [segments],
-  );
-
-  const mapSegmentsFromApi = (apiSegments?: VideoSegmentApi[]): SegmentState[] => {
-    if (!apiSegments?.length) return [];
-    return apiSegments
-      .slice()
-      .sort((a, b) => a.segment_index - b.segment_index)
-      .map((segment) => ({
-        index: segment.segment_index,
-        start: segment.start_second,
-        end: segment.end_second,
-        status:
-          segment.status === "done"
-            ? "ready"
-            : segment.status === "processing"
-              ? "generating"
-              : "pending",
-        videoUrl: segment.video_url ?? undefined,
-      }));
-  };
-
-  useEffect(() => {
-    let isCancelled = false;
-    const createNodeVideo = async () => {
-      if (!params?.nodeId) return;
-
-      try {
-        const response = await fetch(`${API_BASE_URL}/videos`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            node_id: params.nodeId,
-            prompt: `Video cho node ${topicTitle}`,
-            audio_url: null,
-          }),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Failed to create video: ${response.status}`);
-        }
-
-        const data: NodeVideoResponse = await response.json();
-        if (isCancelled) return;
-
-        setVideoId(data.id);
-        setSegments(mapSegmentsFromApi(data.segments));
-        setCurrentSegmentIndex(0);
-        setPlayback((state) => ({ ...state, isPlaying: false, progress: 0 }));
-      } catch (error) {
-        console.error("Unable to create node video", error);
-      }
-    };
-
-    void createNodeVideo();
-    return () => {
-      isCancelled = true;
-    };
-  }, [params?.nodeId, topicTitle]);
-
-  useEffect(() => {
-    if (!videoId || !hasGenerating) return undefined;
-
-    const interval = setInterval(async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/videos/${videoId}/segments`);
-        if (!response.ok) return;
-        const data: VideoSegmentApi[] = await response.json();
-        setSegments(mapSegmentsFromApi(data));
-      } catch (error) {
-        console.error("Unable to refresh segments", error);
-      }
-    }, 1500);
-
-    return () => clearInterval(interval);
-  }, [hasGenerating, videoId]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -169,49 +80,54 @@ export default function LectureVideoPage() {
 
   const handleTimeUpdate = () => {
     const video = videoRef.current;
-    if (!video || !currentSegment) return;
+    if (!video) return;
 
     const duration = video.duration || currentSegment.end - currentSegment.start;
     setPlayback((state) => ({ ...state, progress: video.currentTime, duration }));
 
     if (nextSegment && nextSegment.status === "pending" && video.currentTime >= 20) {
-      startGeneratingNextFromApi(currentSegment.start + video.currentTime);
+      startGeneratingNext(currentSegmentIndex + 1);
     }
   };
 
-  const startGeneratingNextFromApi = async (currentSecond: number) => {
-    if (!videoId) return;
-
+  const startGeneratingNext = (segmentIndex: number) => {
     setSegments((prev) => {
-      const nextIdx = currentSegmentIndex + 1;
-      const target = prev[nextIdx];
+      const target = prev[segmentIndex];
       if (!target || target.status !== "pending") return prev;
       const updated = [...prev];
-      updated[nextIdx] = { ...target, status: "generating" };
+      updated[segmentIndex] = { ...target, status: "generating" };
       return updated;
     });
 
-    try {
-      const response = await fetch(`${API_BASE_URL}/videos/${videoId}/progress`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ current_second: Math.floor(currentSecond) }),
+    setTimeout(() => {
+      setSegments((prev) => {
+        const updated = [...prev];
+        const target = updated[segmentIndex];
+        if (!target) return prev;
+
+        updated[segmentIndex] = {
+          ...target,
+          status: "ready",
+          videoUrl: DEMO_VIDEO_URL,
+        };
+
+        if (!updated[segmentIndex + 1]) {
+          updated.push({
+            index: segmentIndex + 1,
+            start: target.end,
+            end: target.end + 30,
+            status: "pending",
+          });
+        }
+
+        return updated;
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to report progress: ${response.status}`);
-      }
-
-      const data: VideoSegmentApi[] = await response.json();
-      setSegments(mapSegmentsFromApi(data));
-    } catch (error) {
-      console.error("Unable to trigger next segment", error);
-    }
+    }, 1200);
   };
 
   const togglePlay = () => {
     const video = videoRef.current;
-    if (!video || !currentSegment?.videoUrl) return;
+    if (!video) return;
 
     if (playback.isPlaying) {
       video.pause();
@@ -268,9 +184,6 @@ export default function LectureVideoPage() {
     ? Math.min(100, (playback.progress / playback.duration) * 100)
     : 0;
 
-  const segmentStart = currentSegment?.start ?? 0;
-  const segmentEnd = currentSegment?.end ?? segmentStart + 30;
-
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-10">
       <div className="flex items-start justify-between gap-4">
@@ -282,7 +195,7 @@ export default function LectureVideoPage() {
             chuẩn bị đoạn tiếp theo khi bạn xem gần hết.
           </p>
         </div>
-        <Badge variant="secondary" className="self-start">Kết nối backend</Badge>
+        <Badge variant="secondary" className="self-start">Bản demo</Badge>
       </div>
 
       <Card className="overflow-hidden border shadow-lg">
@@ -307,21 +220,15 @@ export default function LectureVideoPage() {
             />
             <div className="absolute left-4 top-4 flex items-center gap-2 rounded-full bg-black/60 px-3 py-1 text-xs text-white">
               <Gauge className="h-4 w-4" />
-              Đoạn {currentSegment?.index ?? 0} ({segmentStart}s - {segmentEnd}s)
+              Đoạn {currentSegment?.index ?? 0} ({currentSegment?.start}s - {currentSegment?.end}s)
             </div>
-            {!currentSegment?.videoUrl && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 text-white">
-                <Loader2 className="h-5 w-5 animate-spin" />
-                <span className="text-sm">Đang chuẩn bị video...</span>
-              </div>
-            )}
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm text-muted-foreground">
               <span>{progressPercent.toFixed(0)}% đoạn hiện tại</span>
               <span>
-                {segmentStart + Math.round(playback.progress)}s / {segmentEnd}s tổng
+                {currentSegment.start + Math.round(playback.progress)}s / {currentSegment.end}s tổng
               </span>
             </div>
             <Progress value={progressPercent} />

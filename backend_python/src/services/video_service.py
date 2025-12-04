@@ -6,46 +6,14 @@ from fastapi import BackgroundTasks, HTTPException
 from sqlmodel import Session, select
 
 from src.db import SessionLocal
-from src.schemas.video import CreateVideoRequest, PlayerConfig, ProviderOption, ProviderVoice
+from src.schemas.video import CreateVideoRequest
 from src.video_models import NodeVideo, VideoSegment
-from .video_providers.base import VideoProvider
-from .video_providers.google_veo import GoogleVeoProvider
 from .video_providers.mock import MockVideoProvider
 
 SEGMENT_DURATION_SECONDS = 30
 SEGMENT_TRIGGER_OFFSET_SECONDS = 20
-DEFAULT_PROVIDER = "google-veo"
 
-PROVIDERS: dict[str, dict] = {
-    "mock": {
-        "provider": MockVideoProvider(),
-        "info": ProviderOption(
-            name="mock",
-            description="Mock provider for development; replace with Veo/Runway/Pika in production",
-            supports_voice=True,
-            voices=[
-                ProviderVoice(id="vi_female_1", name="Giọng nữ miền Bắc", locale="vi-VN"),
-                ProviderVoice(id="vi_male_1", name="Giọng nam miền Bắc", locale="vi-VN"),
-            ],
-        ),
-    },
-    "google-veo": {
-        "provider": GoogleVeoProvider(),
-        "info": ProviderOption(
-            name="google-veo",
-            description="Google Veo via google-genai for high-quality video synthesis",
-            supports_voice=False,
-            voices=[],
-        ),
-    },
-}
-
-
-def _resolve_provider(provider_name: str) -> VideoProvider:
-    provider_entry = PROVIDERS.get(provider_name)
-    if not provider_entry:
-        raise HTTPException(status_code=400, detail=f"Unsupported provider: {provider_name}")
-    return provider_entry["provider"]
+provider = MockVideoProvider()
 
 
 def _create_segment(
@@ -85,16 +53,13 @@ def _update_video_status(session: Session, video: NodeVideo) -> None:
 
 
 async def _process_segment_job(
-    segment_id: str, prompt: str, audio_url: Optional[str], provider_name: str
+    segment_id: str, prompt: str, audio_url: Optional[str]
 ) -> None:
     with SessionLocal() as session:
         segment = session.get(VideoSegment, segment_id)
         if not segment:
             return
-        provider_instance = _resolve_provider(provider_name)
-        job_id = await provider_instance.create_video_segment(
-            prompt, SEGMENT_DURATION_SECONDS, audio_url
-        )
+        job_id = await provider.create_video_segment(prompt, SEGMENT_DURATION_SECONDS, audio_url)
         segment.provider_job_id = job_id
         segment.status = "processing"
         segment.updated_at = datetime.utcnow()
@@ -102,7 +67,7 @@ async def _process_segment_job(
         session.commit()
 
     while True:
-        status_payload = await provider_instance.get_job_status(job_id)
+        status_payload = await provider.get_job_status(job_id)
         with SessionLocal() as session:
             segment = session.get(VideoSegment, segment_id)
             if not segment:
@@ -125,12 +90,9 @@ async def _process_segment_job(
 def create_video(
     session: Session, payload: CreateVideoRequest, background_tasks: BackgroundTasks
 ) -> NodeVideo:
-    _resolve_provider(payload.provider)
     video = NodeVideo(
         node_id=payload.node_id,
         prompt=payload.prompt,
-        provider=payload.provider,
-        voice_id=payload.voice_id,
         audio_url=payload.audio_url,
         status="processing",
     )
@@ -141,9 +103,7 @@ def create_video(
     first_segment = _create_segment(session, video, segment_index=0, status="processing")
     background_tasks.add_task(
         asyncio.run,
-        _process_segment_job(
-            first_segment.id, payload.prompt, payload.audio_url, payload.provider
-        ),
+        _process_segment_job(first_segment.id, payload.prompt, payload.audio_url),
     )
     return video
 
@@ -191,15 +151,6 @@ def trigger_next_segment(
 
     segment = _create_segment(session, video, next_segment_index, status="processing")
     background_tasks.add_task(
-        asyncio.run,
-        _process_segment_job(segment.id, video.prompt, video.audio_url, video.provider),
+        asyncio.run, _process_segment_job(segment.id, video.prompt, video.audio_url)
     )
     return segment
-
-
-def available_providers() -> List[ProviderOption]:
-    return [meta["info"] for meta in PROVIDERS.values()]
-
-
-def build_player_config() -> PlayerConfig:
-    return PlayerConfig()

@@ -2,16 +2,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlmodel import Session
 
 from src.db import get_session
-from src.schemas.video import (
-    CreateVideoRequest,
-    NodeVideoRead,
-    ProgressEvent,
-    ProviderOption,
-    VideoSegmentRead,
-)
+from src.schemas.video import CreateVideoRequest, NodeVideoRead, ProgressEvent, VideoSegmentRead
 from src.services.video_service import (
-    available_providers,
-    build_player_config,
     create_video,
     get_video,
     list_segments,
@@ -29,18 +21,14 @@ def create_node_video(
 ):
     video = create_video(session, payload, background_tasks)
     segments = list_segments(session, video.id)
-    return NodeVideoRead.from_orm(video).copy(
-        update={"segments": segments, "player_config": build_player_config()}
-    )
+    return NodeVideoRead.from_orm(video).copy(update={"segments": segments})
 
 
 @router.get("/{video_id}", response_model=NodeVideoRead)
 def get_node_video(video_id: str, session: Session = Depends(get_session)):
     video = get_video(session, video_id)
     segments = list_segments(session, video_id)
-    return NodeVideoRead.from_orm(video).copy(
-        update={"segments": segments, "player_config": build_player_config()}
-    )
+    return NodeVideoRead.from_orm(video).copy(update={"segments": segments})
 
 
 @router.get("/{video_id}/segments", response_model=list[VideoSegmentRead])
@@ -57,8 +45,3 @@ def report_progress(
 ):
     trigger_next_segment(session, video_id, event.current_second, background_tasks)
     return list_segments(session, video_id)
-
-
-@router.get("/providers", response_model=list[ProviderOption])
-def list_video_providers():
-    return available_providers()

@@ -11,10 +11,6 @@ class NodeVideo(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True, index=True)
     node_id: str = Field(index=True)
     prompt: str
-    provider: str = Field(default="google-veo", description="Video provider identifier")
-    voice_id: Optional[str] = Field(
-        default=None, description="Voice identifier for narration, if supported by provider"
-    )
     audio_url: Optional[str] = None
     status: str = Field(default="processing")
     created_at: datetime = Field(default_factory=datetime.utcnow, nullable=False)
