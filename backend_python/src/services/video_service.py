@@ -8,13 +8,20 @@ from sqlmodel import Session, select
 from src.db import SessionLocal
 from src.schemas.video import CreateVideoRequest
 from src.video_models import NodeVideo, VideoSegment
-from .video_providers.mock import MockVideoProvider
+
+# Import provider
+# from .video_providers.mock import MockVideoProvider
+from .video_providers.google_veo import GoogleVeoProvider
 
 SEGMENT_DURATION_SECONDS = 30
 SEGMENT_TRIGGER_OFFSET_SECONDS = 20
 
-provider = MockVideoProvider()
-
+# --- KHỞI TẠO PROVIDER ---
+# Đảm bảo bạn đã có GOOGLE_API_KEY trong file .env
+provider = GoogleVeoProvider(model="veo-002")
+# Nếu muốn test nhanh mà không tốn tiền, dùng dòng dưới:
+# provider = MockVideoProvider()
+# -------------------------
 
 def _create_segment(
     session: Session,
@@ -55,36 +62,53 @@ def _update_video_status(session: Session, video: NodeVideo) -> None:
 async def _process_segment_job(
     segment_id: str, prompt: str, audio_url: Optional[str]
 ) -> None:
-    with SessionLocal() as session:
-        segment = session.get(VideoSegment, segment_id)
-        if not segment:
-            return
-        job_id = await provider.create_video_segment(prompt, SEGMENT_DURATION_SECONDS, audio_url)
-        segment.provider_job_id = job_id
-        segment.status = "processing"
-        segment.updated_at = datetime.utcnow()
-        session.add(segment)
-        session.commit()
-
-    while True:
-        status_payload = await provider.get_job_status(job_id)
+    """Hàm xử lý job sinh video (chạy background)"""
+    try:
+        # 1. Tạo job
         with SessionLocal() as session:
             segment = session.get(VideoSegment, segment_id)
             if not segment:
                 return
-            segment.status = status_payload.get("status", "processing")
-            segment.video_url = status_payload.get("video_url")
-            segment.error_message = status_payload.get("error_message")
+            job_id = await provider.create_video_segment(prompt, SEGMENT_DURATION_SECONDS, audio_url)
+            segment.provider_job_id = job_id
+            segment.status = "processing"
             segment.updated_at = datetime.utcnow()
             session.add(segment)
-            video = session.get(NodeVideo, segment.node_video_id)
-            if video:
-                _update_video_status(session, video)
             session.commit()
 
-            if segment.status in {"done", "failed"}:
-                break
-        await asyncio.sleep(1)
+        # 2. Polling trạng thái
+        while True:
+            status_payload = await provider.get_job_status(job_id)
+            with SessionLocal() as session:
+                segment = session.get(VideoSegment, segment_id)
+                if not segment:
+                    return
+                segment.status = status_payload.get("status", "processing")
+                segment.video_url = status_payload.get("video_url")
+                segment.error_message = status_payload.get("error_message")
+                segment.updated_at = datetime.utcnow()
+                session.add(segment)
+                
+                # Cập nhật trạng thái video cha
+                video = session.get(NodeVideo, segment.node_video_id)
+                if video:
+                    _update_video_status(session, video)
+                session.commit()
+
+                if segment.status in {"done", "failed"}:
+                    break
+            await asyncio.sleep(5) # Đợi 5s rồi poll tiếp
+
+    except Exception as e:
+        print(f"Error processing segment job: {e}")
+        # Cập nhật trạng thái lỗi nếu crash
+        with SessionLocal() as session:
+            segment = session.get(VideoSegment, segment_id)
+            if segment:
+                segment.status = "failed"
+                segment.error_message = str(e)
+                session.add(segment)
+                session.commit()
 
 
 def create_video(
@@ -101,10 +125,16 @@ def create_video(
     session.refresh(video)
 
     first_segment = _create_segment(session, video, segment_index=0, status="processing")
+    
+    # --- SỬA LỖI Ở ĐÂY: Truyền hàm async trực tiếp, KHÔNG dùng asyncio.run() ---
     background_tasks.add_task(
-        asyncio.run,
-        _process_segment_job(first_segment.id, payload.prompt, payload.audio_url),
+        _process_segment_job, 
+        first_segment.id, 
+        payload.prompt, 
+        payload.audio_url
     )
+    # ---------------------------------------------------------------------------
+    
     return video
 
 
@@ -115,6 +145,12 @@ def get_video(session: Session, video_id: str) -> NodeVideo:
     video.segments  # trigger relationship load
     return video
 
+def get_video_by_node_id(session: Session, node_id: str) -> Optional[NodeVideo]:
+    statement = select(NodeVideo).where(NodeVideo.node_id == node_id)
+    video = session.exec(statement).first()
+    if video:
+        video.segments
+    return video
 
 def list_segments(session: Session, video_id: str) -> List[VideoSegment]:
     statement = (
@@ -132,7 +168,6 @@ def trigger_next_segment(
     if current_second < 0:
         raise HTTPException(status_code=400, detail="current_second must be non-negative")
 
-    # Determine current segment index based on playback time
     current_index = current_second // SEGMENT_DURATION_SECONDS
     position_in_segment = current_second % SEGMENT_DURATION_SECONDS
 
@@ -150,7 +185,14 @@ def trigger_next_segment(
         return existing
 
     segment = _create_segment(session, video, next_segment_index, status="processing")
+    
+    # --- SỬA LỖI Ở ĐÂY CŨNG VẬY ---
     background_tasks.add_task(
-        asyncio.run, _process_segment_job(segment.id, video.prompt, video.audio_url)
+        _process_segment_job, 
+        segment.id, 
+        video.prompt, 
+        video.audio_url
     )
+    # ------------------------------
+    
     return segment
