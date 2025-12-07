@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
+import tempfile
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,6 +14,7 @@ from src.supabase_client import supabase
 from src.utils.file_utils import extract_text_from_file
 
 EMBEDDING_MODEL = "models/text-embedding-004"
+STORAGE_BUCKET = os.getenv("SUPABASE_RAG_BUCKET", "mathmentor-materials")
 _CACHE_TTL_SECONDS = 300
 _RAG_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]], Optional[str]]] = {}
 
@@ -109,57 +112,130 @@ async def embed_texts(texts: List[str]) -> List[List[float]]:
     return []
 
 
-async def index_document_from_file(
-    user_id: Optional[str],
+async def index_document_chunks(
+    *,
+    user_id: str,
+    document_id: str,
+    source_path: str,
     file_path: str,
-    title: str,
+    visibility: str = "private",
     purpose: str = "chat",
-) -> Optional[str]:
-    """Index a local document by extracting, chunking, embedding, and saving to Supabase."""
+) -> int:
+    """
+    Đọc file, tách chunk, embed và lưu vào bảng chunk tương ứng.
+
+    Trả về số chunk đã được insert.
+    """
     content = extract_text_from_file(file_path)
     if not content:
-        return None
+        return 0
 
     chunks = split_text(content)
     if not chunks:
-        return None
+        return 0
 
     embeddings = await embed_texts(chunks)
     if not embeddings:
-        return None
+        return 0
+
+    target_table = "document_chunks"
+    foreign_key = "document_id"
+    visibility_field_value = visibility or "private"
+
+    if purpose != "chat":
+        target_table = "test_material_chunks"
+        foreign_key = "material_id"
 
     created_at = datetime.utcnow().isoformat()
-    doc_payload = {
-        "user_id": user_id,
-        "title": title,
-        "file_path": file_path,
-        "source_type": "upload",
-        "purpose": purpose,
-        "created_at": created_at,
-    }
-    document_response = supabase.table("documents").insert(doc_payload).execute()
-    document_id = document_response.data[0]["id"]
-
-    chunk_rows = []
+    rows = []
     for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-        chunk_rows.append(
-            {
-                "document_id": document_id,
-                "chunk_index": idx,
-                "content": chunk,
-                "embedding": embedding,
-                "purpose": purpose,
-                "created_at": created_at,
-            }
+        if not embedding:
+            continue
+        row: Dict[str, Any] = {
+            "user_id": user_id,
+            foreign_key: document_id,
+            "chunk_index": idx,
+            "content": chunk,
+            "content_length": len(chunk),
+            "source_path": source_path,
+            "embedding": embedding,
+            "embedding_status": "completed",
+            "visibility": visibility_field_value,
+            "created_at": created_at,
+        }
+        if target_table == "document_chunks":
+            row["metadata"] = {"purpose": purpose}
+        rows.append(row)
+
+    if not rows:
+        return 0
+
+    supabase.table(target_table).insert(rows).execute()
+
+    return len(rows)
+
+
+async def process_document(*, user_id: str, document_id: str, purpose: str = "chat") -> bool:
+    """Download, chunk, embed, and persist a document/test material into Supabase."""
+    target_table = "user_documents" if purpose == "chat" else "test_materials"
+
+    record_response = (
+        supabase.table(target_table)
+        .select("id, source_path, visibility")
+        .eq("id", document_id)
+        .limit(1)
+        .execute()
+    )
+
+    if not record_response.data:
+        return False
+
+    record = record_response.data[0]
+
+    source_path = record.get("source_path")
+    if not source_path:
+        return False
+    visibility = record.get("visibility")
+
+    supabase.table(target_table).update({"rag_status": "processing"}).eq("id", document_id).execute()
+
+    try:
+        download_response = supabase.storage.from_(STORAGE_BUCKET).download(source_path)
+        if not download_response:
+            raise RuntimeError("Empty download response")
+
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+            tmp_file.write(download_response)
+            tmp_path = tmp_file.name
+
+        chunk_count = await index_document_chunks(
+            user_id=user_id,
+            document_id=document_id,
+            source_path=source_path,
+            file_path=tmp_path,
+            visibility=visibility or "private",
+            purpose=purpose,
         )
 
-    if chunk_rows:
-        supabase.table("document_chunks").insert(chunk_rows).execute()
+        status_payload = {"rag_status": "completed", "chunk_count": chunk_count}
+        supabase.table(target_table).update(status_payload).eq("id", document_id).execute()
 
-    if user_id:
         clear_rag_cache_for_user(user_id)
+        return chunk_count > 0
+    except Exception:
+        supabase.table(target_table).update({"rag_status": "failed"}).eq("id", document_id).execute()
+        raise
+    finally:
+        # Best-effort cleanup
+        if "tmp_path" in locals() and os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
-    return document_id
+
+def _match_fn_for_purpose(purpose: str) -> str:
+    return "match_documents" if purpose == "chat" else "match_test_materials"
 
 
 async def _search_similar_documents_from_db(
@@ -176,17 +252,15 @@ async def _search_similar_documents_from_db(
         "query_embedding": query_embedding,
         "match_threshold": 0.0,
         "match_count": top_k,
-        "p_user_id": user_id,
     }
-    if user_id is None:
-        rpc_params.pop("p_user_id")
-    response = supabase.rpc("match_documents", rpc_params).execute()
+    if user_id is not None:
+        rpc_params["p_user_id"] = user_id
+
+    response = supabase.rpc(_match_fn_for_purpose(purpose), rpc_params).execute()
     results = response.data or []
 
     formatted_results: List[Dict[str, Any]] = []
     for row in results:
-        if row.get("purpose") and row.get("purpose") != purpose:
-            continue
         title = row.get("title") or row.get("file_name") or ""
         formatted_results.append(
             {
