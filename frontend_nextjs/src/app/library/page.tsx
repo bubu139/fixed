@@ -13,6 +13,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 
 const STORAGE_BUCKET = "mathmentor-materials";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface DocumentRecord {
   id: string;
@@ -119,21 +120,96 @@ export default function LibraryPage() {
     setStatusMessage(`Đang chuẩn bị tải ${files.length} tệp...`);
     setErrorMessage(null);
 
-    // Xác định bảng và khóa ngoại dựa trên mục đích
-    const isChatUpload = uploadPurpose === 'chat';
-    const metadataTable = isChatUpload ? "user_documents" : "test_materials";
-    const chunkTable = isChatUpload ? "document_chunks" : "test_material_chunks";
-    const foreignKeyColumn = isChatUpload ? "document_id" : "material_id";
+    try {
+      // Xác định bảng dựa trên mục đích
+      const isChatUpload = uploadPurpose === 'chat';
+      const metadataTable = isChatUpload ? "user_documents" : "test_materials";
 
-    let successCount = 0;
-    let errorCount = 0;
-    const errorMessages: string[] = [];
+      let successCount = 0;
+      const errorMessages: string[] = [];
 
+      for (const file of Array.from(files)) {
+        const sanitizedName = sanitizeFileName(file.name);
+        const storagePath = `${user.id}/${Date.now()}-${sanitizedName}`;
 
-    // Tải lại cả hai danh sách
-    void fetchChatDocuments();
-    void fetchTestMaterials();
-    event.target.value = "";
+        setStatusMessage(`Đang tải ${file.name}...`);
+
+        const { error: uploadError } = await client.storage
+          .from(STORAGE_BUCKET)
+          .upload(storagePath, file, {
+            cacheControl: "3600",
+            upsert: true,
+            contentType: file.type,
+          });
+
+        if (uploadError) {
+          errorMessages.push(`Tải ${file.name} thất bại: ${uploadError.message}`);
+          continue;
+        }
+
+        const insertPayload = {
+          user_id: user.id,
+          file_name: file.name,
+          file_size: file.size,
+          mime_type: file.type,
+          source_path: storagePath,
+          rag_status: "uploaded",
+          visibility: uploadVisibility,
+        };
+
+        const { data: metadata, error: insertError } = await client
+          .from(metadataTable)
+          .insert(insertPayload)
+          .select("id")
+          .single();
+
+        if (insertError || !metadata?.id) {
+          errorMessages.push(`Không lưu được metadata cho ${file.name}: ${insertError?.message}`);
+          continue;
+        }
+
+        const processResponse = await fetch(`${API_BASE_URL}/api/process-document`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: user.id,
+            documentId: metadata.id,
+            purpose: uploadPurpose,
+          }),
+        });
+
+        if (!processResponse.ok) {
+          errorMessages.push(`Xử lý ${file.name} thất bại: ${processResponse.statusText}`);
+          await client
+            .from(metadataTable)
+            .update({ rag_status: "failed" })
+            .eq("id", metadata.id);
+          continue;
+        }
+
+        successCount += 1;
+      }
+
+      // Tải lại cả hai danh sách
+      void fetchChatDocuments();
+      void fetchTestMaterials();
+      event.target.value = "";
+
+      if (successCount > 0) {
+        setStatusMessage(`Đã xử lý thành công ${successCount}/${files.length} tệp.`);
+      }
+      if (errorMessages.length > 0) {
+        setErrorMessage(errorMessages.join(" \n"));
+      } else {
+        setErrorMessage(null);
+      }
+    } catch (err) {
+      console.error(err);
+      const message = err instanceof Error ? err.message : String(err);
+      setErrorMessage(`Có lỗi xảy ra: ${message}`);
+    } finally {
+      setUploading(false);
+    }
   };
 
   // (HelperText giữ nguyên)
