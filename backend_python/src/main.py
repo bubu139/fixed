@@ -790,19 +790,81 @@ YÊU CẦU:
 
 @app.post("/api/process-document")
 async def process_document(request: ProcessDocumentInput):
-    """Trigger document processing (RAG)"""
+    """
+    Trigger document processing (RAG) với error handling chi tiết
+    """
     try:
-        success = await rag_service.process_document(
+        print(f"[API] Processing document: user={request.userId}, doc={request.documentId}, purpose={request.purpose}")
+        
+        # Validate input
+        if not request.userId or not request.documentId:
+            raise HTTPException(
+                status_code=400, 
+                detail="Thiếu thông tin userId hoặc documentId"
+            )
+        
+        # Gọi service và nhận dict result
+        result = await rag_service.process_document(
             user_id=request.userId,
             document_id=request.documentId,
             purpose=request.purpose
         )
-        if not success:
-            raise HTTPException(status_code=500, detail="Processing failed")
-        return {"status": "ok", "message": "Document processed successfully"}
+        
+        # Kiểm tra success flag
+        if not result.get("success"):
+            error_message = result.get("message", "Lỗi không xác định")
+            print(f"[API] ❌ Processing failed: {error_message}")
+            
+            # Trả về 422 (Unprocessable Entity) thay vì 500
+            raise HTTPException(
+                status_code=422, 
+                detail=error_message
+            )
+        
+        # Thành công
+        chunk_count = result.get("chunk_count", 0)
+        print(f"[API] ✅ Success: {chunk_count} chunks created")
+        
+        return {
+            "status": "ok",
+            "message": f"Đã xử lý thành công. Tạo {chunk_count} chunks.",
+            "chunk_count": chunk_count
+        }
+        
+    except HTTPException:
+        # Re-raise HTTPException để FastAPI xử lý
+        raise
+        
     except Exception as e:
-        print(f"Process document error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Lỗi không mong đợi
+        print(f"[API] ❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Lỗi server: {str(e)}"
+        )
+        
+@app.get("/api/health")
+async def health_check():
+    """Kiểm tra trạng thái API và kết nối Supabase"""
+    try:
+        # Test Supabase connection
+        response = supabase.table("student_profiles").select("id").limit(1).execute()
+        supabase_ok = True
+    except Exception as e:
+        supabase_ok = False
+        print(f"Supabase connection error: {e}")
+    
+    return {
+        "status": "ok",
+        "api_version": "1.0",
+        "supabase_connected": supabase_ok,
+        "embedding_model": "text-embedding-004",
+        "supported_formats": [".pdf", ".docx", ".doc", ".txt"]
+    }
+
 
 # ==============================
 #  API TẠO TEST DỰA TRÊN NODE
