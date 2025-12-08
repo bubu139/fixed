@@ -13,20 +13,6 @@ from src.services.video_service import (
 
 router = APIRouter(prefix="/videos", tags=["videos"])
 
-@router.get("/node/{slug}", response_model=VideoResponse)
-async def get_video(slug: str):
-    video = get_video_by_slug(slug)
-    if not video:
-        raise HTTPException(status_code=404, detail="Video not found")
-    return video
-
-@router.post("/", response_model=VideoResponse)
-async def create_video(payload: VideoCreateRequest):
-    video = await generate_video(payload)
-    if not video:
-        raise HTTPException(status_code=400, detail="Failed to generate video")
-    return video
-
 
 @router.post("/", response_model=NodeVideoRead)
 def create_node_video(

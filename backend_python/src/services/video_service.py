@@ -126,14 +126,14 @@ def create_video(
 
     first_segment = _create_segment(session, video, segment_index=0, status="processing")
     
-    # --- SỬA LỖI Ở ĐÂY: Truyền hàm async trực tiếp, KHÔNG dùng asyncio.run() ---
-    background_tasks.add_task(
-        _process_segment_job, 
-        first_segment.id, 
-        payload.prompt, 
-        payload.audio_url
+    # Sử dụng asyncio.create_task để xử lý async job độc lập
+    asyncio.create_task(
+        _process_segment_job(
+            first_segment.id, 
+            payload.prompt, 
+            payload.audio_url
+        )
     )
-    # ---------------------------------------------------------------------------
     
     return video
 
@@ -186,13 +186,13 @@ def trigger_next_segment(
 
     segment = _create_segment(session, video, next_segment_index, status="processing")
     
-    # --- SỬA LỖI Ở ĐÂY CŨNG VẬY ---
-    background_tasks.add_task(
-        _process_segment_job, 
-        segment.id, 
-        video.prompt, 
-        video.audio_url
+    # Sử dụng asyncio.create_task để xử lý async job độc lập
+    asyncio.create_task(
+        _process_segment_job(
+            segment.id, 
+            video.prompt, 
+            video.audio_url
+        )
     )
-    # ------------------------------
     
     return segment
