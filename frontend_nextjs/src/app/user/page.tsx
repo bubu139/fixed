@@ -41,6 +41,11 @@ import {
   Target,
   TrendingUp,
   UserRound,
+  Brain,           // Mới
+  Lightbulb,       // Mới
+  Map,             // Mới
+  AlertTriangle,   // Mới
+  Loader2,         // Mới
 } from 'lucide-react';
 import Link from 'next/link';
 import {
@@ -63,6 +68,8 @@ import { useUser } from '@/supabase/auth/use-user';
 import { useSupabase } from '@/supabase';
 import { TestHistoryService } from '@/services/test-history.service';
 import type { TestAnalysis, TestAttempt } from '@/types/test-history';
+import { API_BASE_URL } from '@/lib/utils'; // Đảm bảo bạn đã export API_BASE_URL trong utils hoặc thay bằng string trực tiếp
+import { Separator } from '@/components/ui/separator'; // Import Separator
 
 const masteryConfig: ChartConfig = {
   advanced: { label: 'Nắm vững', color: 'hsl(var(--primary))' },
@@ -93,14 +100,28 @@ type TopicStat = {
   accuracy: number;
 };
 
+// --- TYPE CHO AI ANALYSIS ---
+type CompetencyAnalysis = {
+  overview: string;
+  strengths: string[];
+  weaknesses: string[];
+  advice: string[];
+  roadmap: string[];
+};
+
 export default function UserPage() {
   const { user, isUserLoading } = useUser();
   const { client: supabase, isInitialized, error: supabaseError } = useSupabase();
 
   const [attempts, setAttempts] = useState<TestAttempt[]>([]);
-  const [analysis, setAnalysis] = useState<TestAnalysis | null>(null);
+  // Đổi tên analysis cũ thành testAnalysis để tránh nhầm lẫn
+  const [testAnalysis, setTestAnalysis] = useState<TestAnalysis | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // --- STATE CHO AI ---
+  const [aiCompetency, setAiCompetency] = useState<CompetencyAnalysis | null>(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
 
   useEffect(() => {
     if (isUserLoading || !isInitialized) return;
@@ -129,7 +150,7 @@ export default function UserPage() {
         const userAttempts = await historyService.getUserAttempts(user.id, 30);
         const userAnalysis = await historyService.analyzeWeakTopics(user.id);
         setAttempts(userAttempts);
-        setAnalysis(userAnalysis);
+        setTestAnalysis(userAnalysis);
         setLoadError(null);
       } catch (error) {
         console.error('Error loading profile data:', error);
@@ -141,6 +162,29 @@ export default function UserPage() {
 
     loadData();
   }, [isUserLoading, isInitialized, supabase, supabaseError, user]);
+
+  // --- HÀM GỌI AI PHÂN TÍCH ---
+  const handleAnalyzeCompetency = async () => {
+    if (!user) return;
+    setIsAiLoading(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/analyze-student-competency`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: user.id }),
+      });
+      
+      if (!res.ok) throw new Error('Không thể lấy dữ liệu phân tích');
+      
+      const data = await res.json();
+      setAiCompetency(data);
+    } catch (error) {
+      console.error("AI Analysis Error:", error);
+      // Có thể thêm toast error ở đây
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
 
   const topicStats = useMemo<Record<string, TopicStat>>(() => {
     const stats: Record<string, TopicStat> = {};
@@ -216,8 +260,8 @@ export default function UserPage() {
   );
 
   const knowledgeFocus = useMemo(
-    () => (analysis?.weakTopics?.length ? analysis.weakTopics : fallbackWeakTopics),
-    [analysis, fallbackWeakTopics],
+    () => (testAnalysis?.weakTopics?.length ? testAnalysis.weakTopics : fallbackWeakTopics),
+    [testAnalysis, fallbackWeakTopics],
   );
 
   const scoreTrendData = useMemo(
@@ -268,11 +312,11 @@ export default function UserPage() {
   const initials = displayName
     .split(' ')
     .filter(Boolean)
-    .map((part) => part[0])
+    .map((part: string) => part[0]) // <--- THÊM ": string" VÀO ĐÂY
     .join('')
     .slice(0, 2)
     .toUpperCase();
-
+  
   if (isUserLoading || !isInitialized || isLoading) {
     return (
       <main className="flex items-center justify-center h-full">
@@ -322,6 +366,7 @@ export default function UserPage() {
           </Card>
         )}
 
+        {/* --- GRID 1: INFO & SUGGESTION --- */}
         <div className="grid gap-6 lg:grid-cols-[1.2fr_1fr]">
           <Card>
             <CardHeader className="flex flex-row items-start justify-between space-y-0">
@@ -330,7 +375,7 @@ export default function UserPage() {
                   <UserRound className="text-primary" /> {displayName}
                 </CardTitle>
                 <CardDescription>
-                  {analysis?.totalAttempts ? `Đã hoàn thành ${analysis.totalAttempts} bài kiểm tra` : 'Hãy bắt đầu với một bài kiểm tra để AI hiểu rõ bạn hơn'}
+                  {testAnalysis?.totalAttempts ? `Đã hoàn thành ${testAnalysis.totalAttempts} bài kiểm tra` : 'Hãy bắt đầu với một bài kiểm tra để AI hiểu rõ bạn hơn'}
                 </CardDescription>
               </div>
               <Badge variant="secondary">
@@ -396,6 +441,141 @@ export default function UserPage() {
           </Card>
         </div>
 
+        {/* --- GRID 2: AI ANALYSIS SECTION (MỚI) --- */}
+        <Card className="border-2 border-indigo-100 shadow-lg overflow-hidden bg-white">
+          <CardHeader className="bg-gradient-to-r from-indigo-50 to-blue-50 pb-6 border-b border-indigo-100">
+            <div className="flex justify-between items-start md:items-center flex-col md:flex-row gap-4">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-2xl text-indigo-900">
+                  <Brain className="w-6 h-6 text-indigo-600 animate-pulse" />
+                  Hồ Sơ Năng Lực AI
+                </CardTitle>
+                <CardDescription className="text-indigo-600/80 mt-1 font-medium">
+                  Đánh giá toàn diện và lộ trình cá nhân hóa từ Gemini AI
+                </CardDescription>
+              </div>
+              
+              <Button 
+                onClick={handleAnalyzeCompetency} 
+                disabled={isAiLoading}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-md transition-all hover:scale-105"
+              >
+                {isAiLoading ? (
+                  <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Đang phân tích...</>
+                ) : (
+                  <><Sparkles className="w-4 h-4 mr-2" /> Phân tích ngay</>
+                )}
+              </Button>
+            </div>
+          </CardHeader>
+
+          <CardContent className="p-6">
+            {!aiCompetency ? (
+              <div className="flex flex-col items-center justify-center text-center py-8 space-y-4">
+                <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center">
+                  <Brain className="w-8 h-8 text-indigo-300" />
+                </div>
+                <div className="max-w-md space-y-1">
+                  <h3 className="text-lg font-semibold text-gray-900">Khám phá tiềm năng của bạn</h3>
+                  <p className="text-gray-500 text-sm">
+                    Nhấn "Phân tích ngay" để AI tổng hợp dữ liệu và đưa ra lời khuyên.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                
+                {/* 1. Tổng quan */}
+                <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100 relative">
+                  <div className="absolute top-4 right-4 text-indigo-200">
+                      <Brain className="w-10 h-10 opacity-20" />
+                  </div>
+                  <h3 className="font-semibold text-lg text-indigo-900 mb-2 flex items-center gap-2">
+                    <Brain className="w-5 h-5" /> Nhận xét tổng quan
+                  </h3>
+                  <p className="text-gray-700 leading-relaxed italic text-lg">
+                    &ldquo;{aiCompetency.overview}&rdquo;
+                  </p>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6">
+                  {/* 2. Điểm mạnh */}
+                  <div className="bg-green-50/50 p-5 rounded-xl border border-green-100">
+                    <h3 className="font-semibold text-green-800 mb-3 flex items-center gap-2">
+                      <TrendingUp className="w-5 h-5" /> Điểm mạnh
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {aiCompetency.strengths.length > 0 ? (
+                        aiCompetency.strengths.map((s, i) => (
+                          <Badge key={i} className="bg-white text-green-700 border-green-200 shadow-sm px-3 py-1.5 text-sm">
+                            {s}
+                          </Badge>
+                        ))
+                      ) : <span className="text-gray-400 text-sm italic">Cần thêm dữ liệu</span>}
+                    </div>
+                  </div>
+
+                  {/* 3. Điểm yếu */}
+                  <div className="bg-amber-50/50 p-5 rounded-xl border border-amber-100">
+                    <h3 className="font-semibold text-amber-800 mb-3 flex items-center gap-2">
+                      <AlertTriangle className="w-5 h-5" /> Cần cải thiện
+                    </h3>
+                    <div className="flex flex-wrap gap-2">
+                      {aiCompetency.weaknesses.length > 0 ? (
+                        aiCompetency.weaknesses.map((w, i) => (
+                          <Badge key={i} variant="outline" className="bg-white text-amber-700 border-amber-200 shadow-sm px-3 py-1.5 text-sm">
+                            {w}
+                          </Badge>
+                        ))
+                      ) : <span className="text-gray-400 text-sm italic">Không có điểm yếu đáng kể</span>}
+                    </div>
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="grid md:grid-cols-2 gap-8">
+                  {/* 4. Lời khuyên */}
+                  <div>
+                    <h3 className="font-semibold text-blue-800 mb-4 flex items-center gap-2">
+                      <Lightbulb className="w-5 h-5 text-yellow-500" /> Lời khuyên chiến lược
+                    </h3>
+                    <ul className="space-y-3">
+                      {aiCompetency.advice.map((item, idx) => (
+                        <li key={idx} className="flex items-start gap-3 bg-white p-3 rounded-lg border border-blue-100 shadow-sm hover:shadow-md transition-shadow">
+                          <span className="flex-shrink-0 w-6 h-6 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center text-xs font-bold mt-0.5">
+                            {idx + 1}
+                          </span>
+                          <span className="text-gray-700 text-sm leading-relaxed">{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  {/* 5. Lộ trình */}
+                  <div>
+                    <h3 className="font-semibold text-purple-800 mb-4 flex items-center gap-2">
+                      <Map className="w-5 h-5 text-purple-500" /> Lộ trình phát triển
+                    </h3>
+                    <div className="relative border-l-2 border-purple-200 ml-3 space-y-0 pb-2">
+                      {aiCompetency.roadmap.map((step, idx) => (
+                        <div key={idx} className="relative pl-8 py-2 group">
+                          <div className="absolute -left-[9px] top-3 w-4 h-4 bg-white rounded-full border-2 border-purple-400 group-hover:border-purple-600 group-hover:scale-110 transition-all shadow-sm"></div>
+                          <div className="bg-purple-50/50 p-3 rounded-lg border border-purple-100 group-hover:bg-purple-50 transition-colors">
+                              <h4 className="text-xs font-bold text-purple-600 uppercase tracking-wide mb-1">Bước {idx + 1}</h4>
+                              <p className="text-gray-700 text-sm font-medium">{step}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* --- GRID 3: CHARTS (CŨ) --- */}
         <div className="grid gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-2">
             <CardHeader>
@@ -449,6 +629,7 @@ export default function UserPage() {
           </Card>
         </div>
 
+        {/* --- GRID 4: PIE CHART & HISTORY (CŨ) --- */}
         <div className="grid gap-6 lg:grid-cols-3">
           <Card>
             <CardHeader>
