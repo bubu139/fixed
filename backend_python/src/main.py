@@ -42,6 +42,7 @@ app.include_router(node_progress_router)
 app.include_router(video_router)
 
 
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
@@ -98,7 +99,7 @@ print(f"📁 Tests folder: {TESTS_FOLDER}")
 
 # ===== SYSTEM INSTRUCTIONS =====
 
-CHAT_SYSTEM_INSTRUCTION = """Bạn là một AI gia sư toán học THPT lớp 12 Việt Nam, chuyên hướng dẫn học sinh TỰ HỌC và PHÁT TRIỂN Tư DUY.
+CHAT_SYSTEM_INSTRUCTION = r"""Bạn là một AI gia sư toán học THPT lớp 12 Việt Nam, chuyên hướng dẫn học sinh TỰ HỌC và PHÁT TRIỂN Tư DUY.
 
 # NGUYÊN TẮC CỐT LÕI
 🎯 **MỤC TIÊU**: Giúp học sinh tự khám phá kiến thức, KHÔNG làm bài giúp học sinh
@@ -400,6 +401,17 @@ def extract_reply_only(raw_text: str) -> str:
 
 # ===== SCHEMAS =====
 
+
+class StudentCompetencyInput(BaseModel):
+    userId: str
+
+class StudentCompetencyOutput(BaseModel):
+    overview: str               # Nhận xét tổng quan
+    strengths: List[str]        # Điểm mạnh
+    weaknesses: List[str]       # Điểm yếu
+    advice: List[str]           # Lời khuyên cụ thể
+    roadmap: List[str]          # Lộ trình phát triển 3 bước
+
 class MediaPart(BaseModel):
     url: str
 
@@ -572,6 +584,132 @@ async def root():
 # The `genai.configure` is already done globally.
 
 # --- SỬA LỖI 1: TỐI ƯU HÓA TỐC ĐỘ CHAT ---
+
+@app.post("/api/analyze-student-competency")
+async def handle_analyze_competency(request: StudentCompetencyInput):
+    """
+    Tổng hợp dữ liệu học tập (Mindmap, Test, Chat) và nhờ AI đánh giá năng lực.
+    """
+    try:
+        user_id = request.userId
+        print(f"🔍 Analyzing competency for User: {user_id}")
+
+        # --- BƯỚC 1: THU THẬP DỮ LIỆU ĐA NGUỒN ---
+
+        # 1.1. Mindmap Progress (Tiến độ học tập theo node)
+        try:
+            nodes_res = supabase.table("node_progress").select("node_id, score, status").eq("user_id", user_id).execute()
+            nodes_data = nodes_res.data if nodes_res.data else []
+        except Exception as e:
+            print(f"⚠️ Error fetching nodes: {e}")
+            nodes_data = []
+
+        # 1.2. Test History (Lịch sử làm bài kiểm tra - Lấy 5 bài gần nhất)
+        try:
+            tests_res = supabase.table("test_attempts")\
+                .select("test_title, topic, score, difficulty, created_at")\
+                .eq("user_id", user_id)\
+                .order("created_at", desc=True)\
+                .limit(5)\
+                .execute()
+            tests_data = tests_res.data if tests_res.data else []
+        except Exception as e:
+            print(f"⚠️ Error fetching tests: {e}")
+            tests_data = []
+
+        # 1.3. Chat Activity (Đếm số lần hỏi bài AI)
+        # Lưu ý: Cần bảng user_activity_logs ghi lại activity_type='chat_message'
+        chat_count = 0
+        try:
+            chat_res = supabase.table("user_activity_logs")\
+                .select("id", count="exact")\
+                .eq("user_id", user_id)\
+                .eq("activity_type", "chat_message")\
+                .execute()
+            if hasattr(chat_res, 'count') and chat_res.count is not None:
+                chat_count = chat_res.count
+        except Exception as e:
+            print(f"⚠️ Error fetching chat logs: {e}")
+
+        # --- BƯỚC 2: KIỂM TRA DỮ LIỆU RỖNG ---
+        
+        # Chỉ trả về default nếu TẤT CẢ đều rỗng
+        if not nodes_data and not tests_data and chat_count == 0:
+            return {
+                "overview": "Chào bạn! Hiện tại hệ thống chưa có đủ dữ liệu bài làm hay lịch sử hỏi bài của bạn. Hãy thử làm một bài kiểm tra hoặc chat với AI để mình hiểu bạn hơn nhé!",
+                "strengths": [],
+                "weaknesses": [],
+                "advice": ["Hoàn thành bài kiểm tra đầu tiên.", "Thử hỏi AI về một bài toán khó."],
+                "roadmap": ["Làm bài test năng lực chung.", "Ôn tập kiến thức nền tảng."]
+            }
+
+        # --- BƯỚC 3: XÂY DỰNG PROMPT CHO GEMINI ---
+        
+        # Format dữ liệu Mindmap
+        mindmap_text = "Chưa có dữ liệu Mindmap."
+        if nodes_data:
+            mindmap_text = "\n".join([f"- Chủ đề '{item['node_id']}': {item['score']}/100 (Trạng thái: {item.get('status', 'N/A')})" for item in nodes_data])
+
+        # Format dữ liệu Test
+        test_text = "Chưa làm bài kiểm tra nào."
+        if tests_data:
+            test_text = "\n".join([f"- Bài '{item['test_title']}' ({item['topic']} - {item['difficulty']}): {item['score']}/100" for item in tests_data])
+
+        # Format dữ liệu Chat
+        chat_text = f"Người dùng đã tương tác {chat_count} lần với AI Chat để hỏi bài."
+
+        prompt = f"""
+Bạn là một cố vấn học tập AI chuyên nghiệp. Hãy phân tích năng lực học sinh dựa trên dữ liệu tổng hợp sau:
+
+1. TIẾN ĐỘ MINDMAP (Kiến thức nền tảng):
+{mindmap_text}
+
+2. KẾT QUẢ BÀI KIỂM TRA GẦN ĐÂY (Năng lực thực tế):
+{test_text}
+
+3. HOẠT ĐỘNG TƯƠNG TÁC (Mức độ chăm chỉ):
+{chat_text}
+
+YÊU CẦU PHÂN TÍCH:
+Dựa trên dữ liệu trên, hãy trả về JSON (KHÔNG markdown) với cấu trúc:
+{{
+  "overview": "Nhận xét tổng quan về trình độ và thái độ học tập (dựa trên điểm số và độ chăm chỉ chat).",
+  "strengths": ["Tìm 2-3 điểm mạnh từ các bài test điểm cao hoặc chủ đề Mindmap đã master"],
+  "weaknesses": ["Tìm 2-3 điểm yếu từ bài test điểm thấp hoặc chủ đề chưa học"],
+  "advice": ["3 lời khuyên cụ thể. Nếu hay chat mà điểm thấp, hãy khuyên tập trung làm bài tập hơn là chỉ hỏi."],
+  "roadmap": ["3 bước hành động cụ thể cho tuần tới"]
+}}
+
+Lưu ý:
+- Nếu dữ liệu phần nào thiếu, hãy dựa vào phần còn lại để suy luận.
+- Luôn dùng giọng văn khích lệ, sư phạm.
+"""
+
+        # --- BƯỚC 4: GỌI GEMINI ---
+        generation_config = {"temperature": 0.7, "response_mime_type": "application/json"}
+        model = genai.GenerativeModel('gemini-2.5-flash', generation_config=generation_config)
+        
+        ai_response = model.generate_content(prompt)
+        
+        # --- BƯỚC 5: TRẢ KẾT QUẢ ---
+        json_text = clean_json_response(ai_response.text)
+        if not json_text:
+            raise ValueError("AI không trả về JSON hợp lệ")
+            
+        result = json.loads(json_text)
+        return result
+
+    except Exception as e:
+        error_msg = f"Lỗi hệ thống khi phân tích: {str(e)}"
+        print(f"❌ {error_msg}")
+        return {
+            "overview": error_msg,
+            "strengths": [],
+            "weaknesses": [],
+            "advice": ["Vui lòng thử lại sau."],
+            "roadmap": []
+        }
+
 @app.post("/api/chat")
 async def handle_chat(request: ChatInputSchema):
     """Handle chat using a persistent ChatSession for speed."""
@@ -627,7 +765,22 @@ async def handle_chat(request: ChatInputSchema):
 
         if request.media:
             for media in request.media:
-                user_parts.append({"media": {"url": media.url}})
+                # Kiểm tra nếu là Base64
+                if "base64," in media.url:
+                    # Tách header (vd: data:image/jpeg;base64,) và data
+                    header, data = media.url.split("base64,")
+                    mime_type = header.split(":")[1].split(";")[0]
+                    
+                    # Gửi đúng format cho Gemini (inline_data)
+                    user_parts.append({
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": data
+                        }
+                    })
+                else:
+                    # Fallback nếu là URL thường
+                    user_parts.append({"text": f"Image URL: {media.url}"})
 
         # 4) Gửi tin nhắn mới (async)
         #    Model sẽ tự động nối lịch sử đã có với tin nhắn mới này

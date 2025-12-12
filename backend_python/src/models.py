@@ -6,3 +6,4 @@ class NodeProgress(BaseModel):
     node_id: str
     opened: bool
     score: float | None = None
+    node_color: int =0
