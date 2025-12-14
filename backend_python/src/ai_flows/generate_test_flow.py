@@ -1,84 +1,91 @@
 # src/ai_flows/generate_test_flow.py
-import genkit.ai as ai
-from genkit import flow
-from pydantic import BaseModel, Field
-from ..ai_schemas.test_schema import TestSchema
-from typing import Literal # 👈 Thêm Literal
+import json
+import os
+from typing import Literal
 
-MODEL = "gemini-2.5-flash"
+from pydantic import BaseModel, Field
+import google.generativeai as genai
+
+# Import config (để load API Key)
+from ..ai_config import GOOGLE_API_KEY
+from ..ai_schemas.test_schema import TestSchema
+
+# Cấu hình model
+MODEL_NAME = "gemini-2.5-flash"
 
 class GenerateTestInput(BaseModel):
-    topic: str = Field(description='The topic to generate a test for.')
-    # 👇 Thêm 2 trường này
+    topic: str = Field(description='Chủ đề bài kiểm tra.')
     testType: Literal['standard', 'thptqg', 'node'] = Field(
         default='standard', 
-        description='The type of test to generate (standard 3-part, THPTQG 50-question, or node-based).'
+        description='Loại bài kiểm tra (standard, thptqg, hoặc node).'
     )
     numQuestions: int = Field(
         default=5, 
-        description='Approximate number of questions (used for THPTQG or node tests).'
+        description='Số lượng câu hỏi ước lượng (dùng cho THPTQG hoặc node).'
     )
 
-
 class GenerateTestOutput(BaseModel):
-    test: TestSchema = Field(description='The generated test.')
+    test: TestSchema = Field(description='Bài kiểm tra đã được tạo.')
 
-# Tách riêng các đoạn prompt
+# --- PROMPT TEMPLATES ---
 PROMPT_BASE = """Bạn là một AI chuyên tạo đề kiểm tra toán học cho học sinh lớp 12 ở Việt Nam.
-Hãy tạo một bài kiểm tra đầy đủ dựa vào chủ đề và yêu cầu được cung cấp.
-
 Chủ đề: {topic}
 
 YÊU CẦU CHUNG:
-1. Tạo một bài kiểm tra có cấu trúc JSON hợp lệ theo schema đã cho.
-2. Nội dung câu hỏi phải phù hợp với chương trình Toán lớp 12 của Việt Nam.
-3. Sử dụng công thức toán học LaTeX khi cần thiết.
-4. Cung cấp đáp án chính xác cho TẤT CẢ các câu hỏi.
-5. Hãy đảm bảo đầu ra là một đối tượng JSON duy nhất, không có bất kỳ văn bản nào khác.
+1. Nội dung bám sát chương trình Toán 12.
+2. Sử dụng LaTeX cho công thức (ví dụ $x^2$).
+3. JSON trả về phải khớp với schema yêu cầu.
 """
 
 PROMPT_STANDARD_FORMAT = """
-YÊU CẦU CẤU TRÚC (ĐỀ TIÊU CHUẨN):
-1.  Đề bài phải bao gồm 3 phần:
-    -   **Phần 1: Trắc nghiệm (Multiple Choice):** Gồm 4 câu hỏi. Mỗi câu có 4 đáp án (A, B, C, D) và chỉ có 1 đáp án đúng.
-    -   **Phần 2: Đúng/Sai (True/False):** Gồm 1 câu hỏi, trong đó có 4 mệnh đề nhỏ.
-    -   **Phần 3: Trả lời ngắn (Short Answer):** Gồm 1 câu hỏi. Đáp án là một số (tối đa 6 ký tự).
-2.  Đáp án:
-    -   Trắc nghiệm: đáp án là chỉ số của lựa chọn đúng (0-3).
-    -   Đúng/Sai: đáp án là một mảng boolean.
-    -   Trả lời ngắn: đáp án là một chuỗi số.
+CẤU TRÚC (STANDARD):
+- Phần 1: 4 câu Trắc nghiệm (multipleChoice).
+- Phần 2: 1 câu Đúng/Sai (trueFalse).
+- Phần 3: 1 câu Trả lời ngắn (shortAnswer).
 """
 
 PROMPT_THPTQG_FORMAT = """
-YÊU CẦU CẤU TRÚC (ĐỀ THI THPTQG):
-1.  Đề bài CHỈ BAO GỒM 1 PHẦN DUY NHẤT:
-    -   **Phần 1: Trắc nghiệm (multipleChoice):** Gồm {num_questions} câu hỏi. (Mặc định của đề THPTQG là 50, nhưng hãy tạo theo số lượng yêu cầu).
-2.  Mỗi câu hỏi phải có 4 đáp án (A, B, C, D) và chỉ có 1 đáp án đúng.
-3.  Đáp án:
-    -   Trắc nghiệm: đáp án là chỉ số của lựa chọn đúng (0-3).
-    -   KHÔNG tạo phần trueFalse hoặc shortAnswer.
+CẤU TRÚC (THPTQG/NODE):
+- Chỉ gồm 1 phần Trắc nghiệm (multipleChoice) với {num_questions} câu.
+- Không có phần trueFalse hay shortAnswer.
 """
 
-@ai.prompt
-def generate_test_prompt(input: GenerateTestInput) -> ai.Prompt[GenerateTestZOutput]:
+async def generate_test(input: GenerateTestInput) -> GenerateTestOutput:
+    # 1. Cấu hình
+    generation_config = {
+        "temperature": 0.5,
+        "response_mime_type": "application/json", # Bắt buộc trả về JSON
+    }
     
-    prompt_text = PROMPT_BASE.format(topic=input.topic)
-    
-    # 👇 Logic chọn prompt động
-    if input.testType == 'thptqg':
-        prompt_text += PROMPT_THPTQG_FORMAT.format(num_questions=input.numQuestions)
-    elif input.testType == 'node':
-         # Tạm thời dùng format THPTQG cho node test, vì nó cũng chỉ cần trắc nghiệm
-        prompt_text += PROMPT_THPTQG_FORMAT.format(num_questions=input.numQuestions)
-    else: # 'standard'
-        prompt_text += PROMPT_STANDARD_FORMAT
-
-    return ai.Prompt(
-        prompt_text,
-        config=ai.GenerationConfig(model=MODEL, response_format=ai.ResponseFormat.JSON)
+    model = genai.GenerativeModel(
+        model_name=MODEL_NAME,
+        generation_config=generation_config,
+        system_instruction=PROMPT_BASE.format(topic=input.topic)
     )
 
-@flow
-async def generate_test(input: GenerateTestInput) -> GenerateTestOutput:
-    response = await generate_test_prompt.generate(input=input)
-    return response.output
+    # 2. Xây dựng prompt
+    prompt_text = f"Hãy tạo đề kiểm tra về chủ đề: {input.topic}.\n"
+    if input.testType in ['thptqg', 'node']:
+        prompt_text += PROMPT_THPTQG_FORMAT.format(num_questions=input.numQuestions)
+    else:
+        prompt_text += PROMPT_STANDARD_FORMAT
+    
+    prompt_text += "\nTrả về JSON đầy đủ theo cấu trúc đề thi."
+
+    # 3. Gọi AI
+    try:
+        response = await model.generate_content_async(prompt_text)
+        
+        # 4. Parse kết quả
+        # Gemini ở chế độ JSON trả về text là chuỗi JSON hợp lệ
+        json_data = json.loads(response.text)
+        
+        # Validate với Pydantic schema
+        test_obj = TestSchema(**json_data)
+        
+        return GenerateTestOutput(test=test_obj)
+
+    except Exception as e:
+        print(f"❌ Error generating test: {e}")
+        # Trả về đề rỗng hoặc raise lỗi tuỳ logic app
+        raise e

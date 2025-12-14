@@ -1,36 +1,49 @@
 # src/ai_flows/geogebra_flow.py
-import genkit.ai as ai
-from genkit import flow
-from ..ai_schemas.geogebra_schema import GeogebraInputSchema, GeogebraOutputSchema
+import json
+import google.generativeai as genai
+from pydantic import BaseModel, Field
+from typing import List
 
-MODEL = "gemini-2.5-flash"
-GEOGEBRA_PROMPT = """Bạn là một AI gia sư toán học THPT lớp 12 Việt Nam... (sao chép toàn bộ nội dung prompt từ tệp geogebra-flow.ts của bạn vào đây) ... "Một AI gia sư giỏi không phải là người giải bài nhanh nhất, mà là người giúp học sinh TỰ TIN giải bài một mình!" 🎓"""
+from ..ai_config import GOOGLE_API_KEY
 
-@ai.prompt
-def geogebra_prompt(input: GeogebraInputSchema) -> ai.Prompt[GeogebraOutputSchema]:
-    return ai.Prompt(
-        GEOGEBRA_PROMPT, # Lưu ý: prompt này có vẻ là system instruction
-        input=input.request, # Giả định request của user là input
-        config=ai.GenerationConfig(model=MODEL, response_format=ai.ResponseFormat.JSON)
-    )
+MODEL_NAME = "gemini-2.5-flash"
+
+class GeogebraInput(BaseModel):
+    request: str = Field(description="Mô tả hình vẽ bằng lời")
+    graph_type: str = "function"
+
+class GeogebraOutput(BaseModel):
+    commands: List[str]
+
+SYSTEM_PROMPT = """Bạn là chuyên gia GeoGebra. 
+Nhiệm vụ: Chuyển đổi mô tả của người dùng thành danh sách lệnh GeoGebra Classic hợp lệ.
+Quy tắc:
+1. Trả về JSON object duy nhất: {"commands": ["lệnh 1", "lệnh 2"]}
+2. Dùng tên biến ngắn gọn (A, B, f, d).
+3. Không giải thích thêm."""
+
+async def generate_geogebra_commands(input: GeogebraInput) -> GeogebraOutput:
+    generation_config = {
+        "temperature": 0.2, # Thấp để chính xác cú pháp
+        "response_mime_type": "application/json",
+    }
     
-# Lưu ý: System prompt của bạn cho Geogebra rất giống với Chat.
-# Có thể bạn muốn nó hoạt động như một System Instruction.
-# Nếu vậy, cách tiếp cận sau có thể tốt hơn:
-
-@ai.prompt
-def geogebra_prompt_v2(input_request: str) -> ai.Prompt[GeogebraOutputSchema]:
-    return ai.Prompt(
-        input_request,
-        config=ai.GenerationConfig(
-            model=MODEL,
-            system_instruction=GEOGEBRA_PROMPT,
-            response_format=ai.ResponseFormat.JSON
-        )
+    model = genai.GenerativeModel(
+        model_name=MODEL_NAME,
+        generation_config=generation_config,
+        system_instruction=SYSTEM_PROMPT
     )
 
-@flow
-async def generate_geogebra_commands(input: GeogebraInputSchema) -> GeogebraOutputSchema:
-    # Sử dụng v2 nếu bạn muốn prompt dài hoạt động như một chỉ dẫn hệ thống
-    response = await geogebra_prompt_v2.generate(input_request=input.request)
-    return response.output
+    prompt = f"Vẽ hình cho yêu cầu: {input.request}"
+
+    try:
+        response = await model.generate_content_async(prompt)
+        data = json.loads(response.text)
+        
+        # Đảm bảo data có key 'commands'
+        commands = data.get("commands", [])
+        return GeogebraOutput(commands=commands)
+        
+    except Exception as e:
+        print(f"❌ Error generating geogebra: {e}")
+        return GeogebraOutput(commands=[])

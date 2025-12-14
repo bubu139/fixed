@@ -11,7 +11,7 @@ from ..services.audio_service import transcribe_audio # Import service
 MODEL_NAME = "gemini-2.5-flash" # Khuyên dùng 1.5 Flash vì ổn định hơn bản 2.5/Experimental
 
 
-SYSTEM_INSTRUCTION = """
+SYSTEM_INSTRUCTION = SYSTEM_INSTRUCTION = """
 Bạn là một AI gia sư toán học THPT lớp 12 Việt Nam tâm huyết và chuyên nghiệp.
 Triết lý: "Không giải bài thay học sinh, mà trang bị tư duy để học sinh TỰ TIN giải quyết vấn đề."
 

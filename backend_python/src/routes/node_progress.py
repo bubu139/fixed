@@ -13,19 +13,11 @@ router = APIRouter(prefix="/node-progress", tags=["node-progress"])
 @router.post("/update")
 def update_node_progress(data: NodeProgress):
     try:
-        # Calculate status & color
+        # Calculate status
         status = "learning"
-        node_color = 1 # Mặc định là đang học (Vàng) nếu gọi update
-
-        # Nếu chưa mở thì là 0 (Blue), nhưng hàm update thường gọi khi đã tương tác
-        if not data.opened:
-             node_color = 0
-
-        # Logic Mastered (Xanh lá)
         if data.score is not None and data.score >= 80:
             status = "mastered"
-            node_color = 2
-        
+
         # Chuẩn bị dữ liệu
         payload = {
             "user_id": data.user_id,
@@ -33,10 +25,11 @@ def update_node_progress(data: NodeProgress):
             "opened": data.opened,
             "score": data.score,
             "status": status,
-            "node_color": node_color, # [MỚI] Lưu màu
             "updated_at": datetime.utcnow().isoformat()
         }
 
+        # Sử dụng upsert: Nếu trùng (user_id, node_id) thì update, chưa có thì insert
+        # Yêu cầu: Bảng database phải có constraint unique(user_id, node_id) như code SQL bên trên
         response = supabase.table("node_progress").upsert(
             payload, 
             on_conflict="user_id, node_id"
