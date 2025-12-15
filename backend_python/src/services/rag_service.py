@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import time
+from bisect import insort
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -234,23 +235,24 @@ async def _search_similar_documents_from_db(
     response = supabase.rpc("match_documents", rpc_params).execute()
     results = response.data or []
 
-    formatted_results: List[Dict[str, Any]] = []
+    ranked: List[Tuple[float, Dict[str, Any]]] = []
     for row in results:
         if row.get("purpose") and row.get("purpose") != purpose:
             continue
+        score = float(row.get("similarity", 0))
         title = row.get("title") or row.get("file_name") or ""
-        formatted_results.append(
-            {
-                "title": title,
-                "file_name": row.get("file_name") or title,
-                "content": row.get("content", ""),
-                "score": float(row.get("similarity", 0)),
-            }
-        )
-        if len(formatted_results) >= top_k:
-            break
+        item = {
+            "title": title,
+            "file_name": row.get("file_name") or title,
+            "content": row.get("content", ""),
+            "score": score,
+        }
+        # Giữ danh sách top_k bằng cách chèn có sắp xếp (tìm kiếm nhị phân)
+        insort(ranked, (-score, item))
+        if len(ranked) > top_k:
+            ranked.pop()
 
-    return formatted_results
+    return [item for _, item in ranked]
 
 
 def _cache_key(user_id: Optional[str], query: str, purpose: str) -> str:

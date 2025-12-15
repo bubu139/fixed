@@ -11,7 +11,7 @@ import { Loader, Sparkles, PencilRuler, BrainCircuit, Clapperboard } from 'lucid
 import { Separator } from '../ui/separator';
 import { API_BASE_URL } from '@/lib/utils';
 // 🔥 FIX 1: Import API trực tiếp thay vì hook cũ
-import { openNode, type NodeProgress } from "@/lib/nodeProgressApi";
+import { openNode, type NodeProgress, updateNodeScore } from "@/lib/nodeProgressApi";
 import { useUser } from "@/supabase/auth/use-user"; // Import hook user nếu có, hoặc dùng context
 
 type NodeDetailDialogProps = {
@@ -19,7 +19,27 @@ type NodeDetailDialogProps = {
   isOpen: boolean;
   onClose: () => void;
   // 🔥 FIX 2: Nhận progress từ cha để đảm bảo đồng bộ dữ liệu
-  currentProgress?: NodeProgress; 
+  currentProgress?: NodeProgress;
+};
+
+type NodeContent = {
+  overview: string;
+  deepDive: string;
+  references: string[];
+};
+
+type ExerciseItem = {
+  id: string;
+  prompt: string;
+  level: string;
+  rationale: string;
+  tags: string[];
+};
+
+type GeneratedTest = {
+  scope: string;
+  passThreshold: number;
+  questions: { id: string; stem: string; options: string[]; answer: string; explanation: string }[];
 };
 
 export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: NodeDetailDialogProps) {
@@ -49,30 +69,41 @@ export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: Nod
     colorClass = "text-orange-700 bg-orange-100 border-orange-300"; // Started (Low)
   }
 
-  const [summary, setSummary] = useState('');
-  const [exercises, setExercises] = useState('');
+  const [content, setContent] = useState<NodeContent>({ overview: '', deepDive: '', references: [] });
+  const [exerciseItems, setExerciseItems] = useState<ExerciseItem[]>([]);
+  const [testData, setTestData] = useState<GeneratedTest | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   const [isExercisesLoading, setIsExercisesLoading] = useState(false);
+  const [isTestLoading, setIsTestLoading] = useState(false);
 
   useEffect(() => {
     if (isOpen && node) {
-      setSummary('');
-      setExercises('');
+      setContent({ overview: '', deepDive: '', references: [] });
+      setExerciseItems([]);
+      setTestData(null);
 
       const fetchSummary = async () => {
         setIsSummaryLoading(true);
         try {
-          const response = await fetch(`${API_BASE_URL}/api/summarize-topic`, {
+          const response = await fetch(`${API_BASE_URL}/api/learning/node-content`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ topic: node.label }),
+            body: JSON.stringify({ topic: node.label, nodeId: node.id, userId }),
           });
 
           if (!response.ok) throw new Error('Failed to fetch summary');
           const data = await response.json();
-          setSummary(data.summary);
+          setContent({
+            overview: data.overview || data.summary || '',
+            deepDive: data.deepDive || data.deep_dive || '',
+            references: data.references || [],
+          });
         } catch {
-          setSummary('Không thể tải tóm tắt kiến thức. Vui lòng thử lại.');
+          setContent({
+            overview: 'Không thể tải tóm tắt kiến thức. Vui lòng thử lại.',
+            deepDive: '',
+            references: [],
+          });
         } finally {
           setIsSummaryLoading(false);
         }
@@ -85,19 +116,47 @@ export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: Nod
   const handleGenerateExercises = async () => {
     setIsExercisesLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/api/generate-exercises`, {
+      const response = await fetch(`${API_BASE_URL}/api/learning/node-exercises`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: node.label }),
+        body: JSON.stringify({ topic: node.label, userId, targetScore: 8.5, difficulty: 'adaptive' }),
       });
 
       if (!response.ok) throw new Error('Failed to fetch exercises');
       const data = await response.json();
-      setExercises(data.exercises);
+      setExerciseItems(data.exercises || []);
     } catch {
-      setExercises('Không thể tạo bài tập. Vui lòng thử lại.');
+      setExerciseItems([]);
     } finally {
       setIsExercisesLoading(false);
+    }
+  };
+
+  const handleGenerateTest = async () => {
+    setIsTestLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/learning/node-test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ topic: node.label, userId, nodeId: node.id, numQuestions: 4 })
+      });
+      if (!response.ok) throw new Error('Failed to fetch test');
+      const data: GeneratedTest = await response.json();
+      setTestData(data);
+    } catch (error) {
+      console.error(error);
+      setTestData(null);
+    } finally {
+      setIsTestLoading(false);
+    }
+  };
+
+  const handleMarkMastered = async () => {
+    if (!userId) return;
+    try {
+      await updateNodeScore(userId, node.id, 85);
+    } catch (error) {
+      console.error('Không thể cập nhật trạng thái node', error);
     }
   };
 
@@ -126,22 +185,44 @@ export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: Nod
               </div>
             )}
 
-            <h3 className="flex items-center gap-2 font-semibold text-md mb-2">
-              <Sparkles className="w-5 h-5 text-yellow-500" />
-              Kiến thức liên quan
-            </h3>
+          <h3 className="flex items-center gap-2 font-semibold text-md mb-2">
+            <Sparkles className="w-5 h-5 text-yellow-500" />
+            Kiến thức chi tiết
+          </h3>
 
-            {isSummaryLoading ? (
-              <div className="flex items-center justify-center p-8">
-                <Loader className="animate-spin" />
-              </div>
-            ) : (
-              <ReactMarkdown>{summary}</ReactMarkdown>
-            )}
+          {isSummaryLoading ? (
+            <div className="flex items-center justify-center p-8">
+              <Loader className="animate-spin" />
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <ReactMarkdown>{content.overview}</ReactMarkdown>
+              {content.deepDive && (
+                <div className="p-3 rounded-lg bg-blue-50 border border-blue-200">
+                  <p className="text-sm font-semibold text-blue-800 mb-2">Đi sâu bản chất</p>
+                  <ReactMarkdown className="text-sm text-blue-900">{content.deepDive}</ReactMarkdown>
+                </div>
+              )}
+              {content.references.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold text-slate-700">Tài liệu tham khảo uy tín</p>
+                  <ul className="list-disc list-inside text-sm text-slate-600">
+                    {content.references.map((ref, idx) => (
+                      <li key={idx}>
+                        <a href={ref} target="_blank" rel="noreferrer" className="text-blue-600 underline">
+                          {ref}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
 
-            <Separator className="my-6" />
+          <Separator className="my-6" />
 
-            <h3 className="flex items-center gap-2 font-semibold text-md mb-4">
+          <h3 className="flex items-center gap-2 font-semibold text-md mb-4">
               <PencilRuler className="w-5 h-5 text-green-500" />
               Bài tập vận dụng
             </h3>
@@ -150,13 +231,54 @@ export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: Nod
               <div className="flex items-center justify-center p-8">
                 <Loader className="animate-spin" />
               </div>
-            ) : exercises ? (
-              <div className="p-4 bg-muted/50 rounded-lg border">
-                <ReactMarkdown>{exercises}</ReactMarkdown>
+            ) : exerciseItems.length > 0 ? (
+              <div className="space-y-3">
+                {exerciseItems.map((item) => (
+                  <div key={item.id} className="p-3 border rounded-lg bg-white shadow-sm">
+                    <p className="font-semibold text-slate-800">{item.prompt}</p>
+                    <p className="text-xs text-slate-500 mt-1">Độ khó: {item.level}</p>
+                    <p className="text-xs text-slate-500">{item.rationale}</p>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {item.tags.map((tag) => (
+                        <span key={tag} className="text-[11px] px-2 py-1 bg-slate-100 rounded-full border">#{tag}</span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="text-center text-gray-500 italic p-4">
                 Nhấn nút bên dưới để tạo bài tập.
+              </div>
+            )}
+
+            <Separator className="my-6" />
+
+            <h3 className="flex items-center gap-2 font-semibold text-md mb-4">
+              <PencilRuler className="w-5 h-5 text-blue-500" />
+              Bài kiểm tra kiến thức
+            </h3>
+
+            {isTestLoading ? (
+              <div className="flex items-center justify-center p-8">
+                <Loader className="animate-spin" />
+              </div>
+            ) : testData ? (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600">Phạm vi: {testData.scope} · Đạt >= {Math.round(testData.passThreshold * 100)}% sẽ chuyển node sang trạng thái đạt.</p>
+                <div className="space-y-2">
+                  {testData.questions.map((q) => (
+                    <div key={q.id} className="p-3 border rounded-lg bg-slate-50">
+                      <p className="font-semibold text-slate-800">{q.stem}</p>
+                      <p className="text-xs text-slate-600 mt-1">Đáp án mẫu: {q.answer}</p>
+                      <p className="text-xs text-slate-500">{q.explanation}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-center text-gray-500 italic p-4">
+                Sinh nhanh bài kiểm tra để đánh giá đã nắm vững node.
               </div>
             )}
           </div>
@@ -175,11 +297,22 @@ export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: Nod
             {isExercisesLoading ? "Đang tạo..." : "Tạo bài tập mới"}
           </Button>
 
+          <Button onClick={handleGenerateTest} disabled={isTestLoading} variant="outline">
+            {isTestLoading ? <Loader className="animate-spin mr-2" /> : <Sparkles className="mr-2 text-blue-500" />}
+            {isTestLoading ? "Đang tạo bài kiểm tra..." : "Sinh bài kiểm tra"}
+          </Button>
+
           <Link href={`/tests/custom-node-test?nodeId=${node.id}&title=${encodeURIComponent(node.label)}`}>
             <Button variant="secondary" className="w-full">
               🎯 Làm bài kiểm tra
             </Button>
           </Link>
+
+          {testData && (
+            <Button variant="ghost" className="w-full" onClick={handleMarkMastered}>
+              ✅ Đánh dấu đã đạt (>=80%)
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

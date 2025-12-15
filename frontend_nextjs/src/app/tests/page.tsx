@@ -42,6 +42,22 @@ export default function TestsPage() {
             </Card>
           </Link>
 
+          <Link href="/tests/thptqg-2025">
+            <Card className="hover:border-primary hover:shadow-lg transition-all">
+              <CardHeader>
+                <CardTitle className="flex items-start gap-3">
+                  <FileText className="text-primary mt-1 flex-shrink-0" />
+                  <span>Luyện đề THPTQG 2025 (RAG)</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <CardDescription>
+                  Sinh đề chuẩn cấu trúc 2025, tránh trùng lặp câu hỏi, có đánh giá thời gian làm bài và điểm yếu sau khi nộp.
+                </CardDescription>
+              </CardContent>
+            </Card>
+          </Link>
+
           {/* ⭐ Danh sách đề kiểm tra */}
           {tests.map((test) => (
             <Link href={`/tests/${test.id}`} key={test.id}>

@@ -1,9 +1,11 @@
 # src/ai_flows/chat_flow.py
 import asyncio
+import json
 import os
+import re
 import tempfile
-import httpx 
-from typing import AsyncGenerator
+import httpx
+from typing import AsyncGenerator, Any, Dict, List
 from ..ai_schemas.chat_schema import ChatInputSchema
 from ..ai_config import genai 
 from ..services.audio_service import transcribe_audio # Import service
@@ -70,6 +72,28 @@ Bạn phải trả về JSON khớp với schema sau:
 """
 
 
+def _clean_json_response(raw_text: str) -> str:
+    """Tìm và làm sạch khối JSON đầu tiên trong phản hồi của mô hình."""
+    if not raw_text:
+        return ""
+
+    json_match = re.search(r"{[\s\S]*}", raw_text)
+    if not json_match:
+        return ""
+
+    json_text = json_match.group(0)
+    json_text = re.sub(r"[\x00-\x1F\x7F]", " ", json_text)
+    json_text = json_text.replace("\n", " ").replace("\t", " ")
+    json_text = json_text.replace("\\n", " ").replace("\\t", " ")
+    if json_text.startswith("```json"):
+        json_text = json_text[7:]
+    elif json_text.startswith("```"):
+        json_text = json_text[3:]
+    if json_text.endswith("```"):
+        json_text = json_text[:-3]
+    return json_text.strip()
+
+
 async def download_file_from_url(url: str) -> str:
     """Tải file từ URL về thư mục tạm"""
     try:
@@ -87,6 +111,89 @@ async def download_file_from_url(url: str) -> str:
     except Exception as e:
         print(f"❌ Error downloading file: {e}")
         return None
+
+
+async def run_chat_turn(
+    input: ChatInputSchema,
+    student_context: str = "",
+    rag_context: str = "",
+) -> Dict[str, Any]:
+    """Trả về JSON tương thích frontend, có dùng hồ sơ năng lực và mục tiêu điểm."""
+
+    generation_config = {
+        "temperature": 0.6,
+        "max_output_tokens": 8192,
+        "response_mime_type": "application/json",
+    }
+
+    system_instruction = (
+        SYSTEM_INSTRUCTION
+        + "\n---\nLuôn trả JSON với reply, mindmap_insights, geogebra."
+        + " Cá nhân hóa theo hồ sơ năng lực, mục tiêu điểm và tránh cung cấp đáp án ngay."
+    )
+
+    model = genai.GenerativeModel(
+        model_name=MODEL_NAME,
+        generation_config=generation_config,
+        system_instruction=system_instruction,
+    )
+
+    gemini_history: List[Dict[str, Any]] = []
+    if input.history:
+        for turn in input.history:
+            role = "model" if turn.role == "assistant" else "user"
+            gemini_history.append({"role": role, "parts": [{"text": turn.content}]})
+
+    chat_session = model.start_chat(history=gemini_history)
+
+    user_parts: List[Dict[str, Any]] = []
+    prefixed_prompt = (
+        f"=== HỒ SƠ HỌC SINH ===\n{student_context}\n"
+        f"- Mục tiêu điểm: {input.targetScore if input.targetScore is not None else 'Chưa đặt'}\n"
+        f"- Mức năng lực: {input.skillLevel or 'chưa rõ'}\n"
+        f"- Mục tiêu học tập: {input.goalText or 'chưa cung cấp'}\n"
+        "=== NGỮ CẢNH TÀI LIỆU ===\n"
+        f"{rag_context}\n"
+        "=== YÊU CẦU MỚI ===\n"
+        f"{input.message}"
+    )
+    user_parts.append({"text": prefixed_prompt})
+
+    if input.media:
+        for media in input.media:
+            user_parts.append({"media": {"url": media.url}})
+
+    response = await chat_session.send_message_async(user_parts, stream=True)
+
+    collected_text = ""
+    async for chunk in response:
+        collected_text += chunk.text or ""
+
+    cleaned = _clean_json_response(collected_text)
+    payload: Dict[str, Any] = {
+        "reply": collected_text,
+        "mindmap_insights": [],
+        "geogebra": {"should_draw": False, "reason": "", "commands": []},
+    }
+
+    if cleaned:
+        try:
+            payload = json.loads(cleaned)
+        except Exception:
+            payload["reply"] = collected_text
+
+    if "reply" not in payload:
+        payload["reply"] = collected_text
+
+    geo_block = payload.get("geogebra") or {}
+    payload["geogebra"] = {
+        "should_draw": bool(geo_block.get("should_draw")),
+        "reason": geo_block.get("reason") or "",
+        "commands": geo_block.get("commands") if isinstance(geo_block.get("commands"), list) else [],
+        "prompt": geo_block.get("prompt") or input.message,
+    }
+
+    return payload
 
 async def chat(input: ChatInputSchema) -> AsyncGenerator[str, None]:
     # 1. Cấu hình Model
