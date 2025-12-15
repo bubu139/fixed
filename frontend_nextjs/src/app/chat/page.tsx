@@ -146,6 +146,14 @@ export default function ChatPage() {
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [mindmapUpdates, setMindmapUpdates] = useState<MindmapInsightPayload[]>([]);
   const [geogebraSuggestion, setGeogebraSuggestion] = useState<GeogebraSuggestion | null>(null);
+  const [guidedMode, setGuidedMode] = useState(true);
+  const [micMode, setMicMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -155,6 +163,7 @@ export default function ChatPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
   const mathFieldRef = useRef<MathfieldElement>(null);
+  const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
     setMessages([{
@@ -162,6 +171,12 @@ export default function ChatPage() {
       isUser: false
     }]);
   }, []);
+
+  useEffect(() => {
+    if (!micMode) {
+      stopListening();
+    }
+  }, [micMode]);
 
   const handleInsertSymbol = (latex: string) => {
     const mf = mathFieldRef.current;
@@ -174,11 +189,12 @@ export default function ChatPage() {
     }
   };
 
-  const handleSend = async (e?: FormEvent) => {
+  const handleSend = async (e?: FormEvent, messageOverride?: string) => {
     if (e) e.preventDefault();
-    if (!input.trim() && attachedFiles.length === 0) return;
+    const payloadInput = (messageOverride ?? input).trim();
+    if (!payloadInput && attachedFiles.length === 0) return;
 
-    const normalizedInput = input.trim();
+    const normalizedInput = payloadInput;
     const userVisibleText = normalizedInput || '📎 Đã gửi file đính kèm';
     const userMessage: Message = { text: userVisibleText, isUser: true, files: attachedFiles };
 
@@ -204,15 +220,15 @@ export default function ChatPage() {
     try {
       const media = currentFiles.map(file => ({ url: file.content }));
 
-      const response = await fetch(`${API_BASE_URL}/api/chat`, {
+      const endpoint = guidedMode ? `${API_BASE_URL}/api/learning/guided-solve` : `${API_BASE_URL}/api/chat`;
+      const payload = guidedMode
+        ? { userId: user?.id ?? null, message: apiMessage, history: historyPayload, studentAnswer: normalizedInput || undefined, requireGeoGebra: true }
+        : { userId: user?.id ?? null, message: apiMessage, media, history: historyPayload };
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user?.id ?? null,
-          message: apiMessage,
-          media,
-          history: historyPayload
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -224,55 +240,81 @@ export default function ChatPage() {
         throw new Error(errorText);
       }
 
-      const result: ChatApiResponse = await response.json();
-      const assistantMessage: Message = {
-        text: result.reply || 'Lỗi phản hồi.',
-        isUser: false
-      };
+      const result = await response.json();
+      if (guidedMode) {
+        const steps: string[] = result.steps || [];
+        const recap: string[] = result.recapKnowledge || [];
+        const guidedText = [
+          'Chế độ mic/hướng dẫn từng bước:',
+          steps.map((s: string, idx: number) => `${idx + 1}. ${s}`).join('\n'),
+          '',
+          'Kiến thức cần nhắc:',
+          recap.map((s: string) => `- ${s}`).join('\n')
+        ].join('\n');
+        setMessages(prev => [...prev, { text: guidedText, isUser: false }]);
 
-      setMessages(prev => [...prev, assistantMessage]);
-
-      // 🔥 BLOCK MINDMAP ĐÃ SỬA
-      if (Array.isArray(result.mindmap_insights) && result.mindmap_insights.length > 0) {
-        const normalized: MindmapInsightPayload[] = result.mindmap_insights
-          .filter((node): node is ApiMindmapInsight => Boolean(node && node.node_id && node.label))
-          .map((node) => ({
-            nodeId: node.node_id,
-            parentNodeId: node.parent_node_id ?? null,
-            label: node.label,
-            type: node.type,
-            weaknessSummary: node.weakness_summary,
-            actionSteps: node.action_steps,
-            color: node.color,
-          }));
-
-        if (normalized.length > 0) {
-          setMindmapUpdates(normalized);
-
-          try {
-            await upsertMindmapInsights(normalized);
-          } catch (err) {
-            console.error('Lỗi lưu mindmap:', err);
-          }
-
-          normalized.forEach((node) => {
-            updateNodeScore(node.nodeId, 100);
+        const geoBlock = result.geogebra;
+        if (geoBlock?.should_draw && geoBlock.commands && geoBlock.commands.length > 0) {
+          setGeogebraSuggestion({
+            prompt: geoBlock.prompt || apiMessage,
+            reason: geoBlock.reason || 'Vẽ hình để trực quan hơn.',
+            commands: geoBlock.commands,
+            consumed: false,
           });
+        } else {
+          setGeogebraSuggestion(null);
         }
       } else {
-        setMindmapUpdates([]);
-      }
+        const typedResult: ChatApiResponse = result;
+        const assistantMessage: Message = {
+          text: typedResult.reply || 'Lỗi phản hồi.',
+          isUser: false
+        };
 
-      const geoBlock = result.geogebra;
-      if (geoBlock?.should_draw && geoBlock.commands && geoBlock.commands.length > 0) {
-        setGeogebraSuggestion({
-          prompt: geoBlock.prompt || apiMessage,
-          reason: geoBlock.reason || 'Vẽ hình để trực quan hơn.',
-          commands: geoBlock.commands,
-          consumed: false,
-        });
-      } else {
-        setGeogebraSuggestion(null);
+        setMessages(prev => [...prev, assistantMessage]);
+
+        // 🔥 BLOCK MINDMAP ĐÃ SỬA
+        if (Array.isArray(typedResult.mindmap_insights) && typedResult.mindmap_insights.length > 0) {
+          const normalized: MindmapInsightPayload[] = typedResult.mindmap_insights
+            .filter((node): node is ApiMindmapInsight => Boolean(node && node.node_id && node.label))
+            .map((node) => ({
+              nodeId: node.node_id,
+              parentNodeId: node.parent_node_id ?? null,
+              label: node.label,
+              type: node.type,
+              weaknessSummary: node.weakness_summary,
+              actionSteps: node.action_steps,
+              color: node.color,
+            }));
+
+          if (normalized.length > 0) {
+            setMindmapUpdates(normalized);
+
+            try {
+              await upsertMindmapInsights(normalized);
+            } catch (err) {
+              console.error('Lỗi lưu mindmap:', err);
+            }
+
+            normalized.forEach((node) => {
+              updateNodeScore(node.nodeId, 100);
+            });
+          }
+        } else {
+          setMindmapUpdates([]);
+        }
+
+        const geoBlock = typedResult.geogebra;
+        if (geoBlock?.should_draw && geoBlock.commands && geoBlock.commands.length > 0) {
+          setGeogebraSuggestion({
+            prompt: geoBlock.prompt || apiMessage,
+            reason: geoBlock.reason || 'Vẽ hình để trực quan hơn.',
+            commands: geoBlock.commands,
+            consumed: false,
+          });
+        } else {
+          setGeogebraSuggestion(null);
+        }
       }
     } catch (error: any) {
       console.error('Lỗi Chat:', error);
@@ -318,6 +360,83 @@ export default function ChatPage() {
       setAttachedFiles(prev => [...prev, newFile]);
     };
     reader.readAsDataURL(file);
+  };
+
+  const stopListening = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+    setIsListening(false);
+  };
+
+  const startListening = () => {
+    if (typeof window === 'undefined') return;
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setSpeechError('Trình duyệt chưa hỗ trợ ghi âm.');
+      return;
+    }
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      mediaStreamRef.current = stream;
+      const recorder = new MediaRecorder(stream);
+      audioChunksRef.current = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        if (!audioChunksRef.current.length) {
+          setSpeechError('Không thu được âm thanh, vui lòng thử lại.');
+          setIsListening(false);
+          return;
+        }
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'voice.webm');
+        try {
+          setIsTranscribing(true);
+          const res = await fetch(`${API_BASE_URL}/api/stt`, { method: 'POST', body: formData });
+          if (!res.ok) throw new Error('Không gửi được file âm thanh');
+          const data = await res.json();
+          const transcript = (data?.text || '').trim();
+          if (transcript) {
+            setInput(transcript);
+            await handleSend(undefined, transcript);
+          } else {
+            setSpeechError('Không nhận diện được nội dung.');
+          }
+        } catch (err: any) {
+          console.error('Transcription error', err);
+          setSpeechError(err.message || 'Không thể chuyển giọng nói thành văn bản.');
+        } finally {
+          setIsTranscribing(false);
+        }
+      };
+
+      recorder.onerror = (event: any) => {
+        console.error('Recorder error', event);
+        setSpeechError('Không thể ghi âm.');
+        setIsListening(false);
+      };
+
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setSpeechError(null);
+      setIsListening(true);
+    }).catch((err) => {
+      console.error('getUserMedia error', err);
+      setSpeechError('Không thể truy cập micro.');
+    });
   };
 
   const removeFile = (index: number) => {
@@ -483,6 +602,9 @@ export default function ChatPage() {
             ))}
           </div>
         )}
+        {speechError && (
+          <p className="text-xs text-red-500 mb-1">{speechError}</p>
+        )}
 
         {/* MAIN INPUT ROW */}
         <div className="flex gap-2 items-end">
@@ -509,6 +631,31 @@ export default function ChatPage() {
             title="Chụp ảnh bài tập"
           >
             <Camera className="w-5 h-5" />
+          </Button>
+
+          <Button
+            type="button"
+            variant={micMode ? "default" : "ghost"}
+            className="flex-shrink-0 h-10 rounded-xl px-3"
+            onClick={() => {
+              const next = !micMode;
+              setMicMode(next);
+              if (next) startListening(); else stopListening();
+            }}
+            disabled={isLoading}
+          >
+            {isTranscribing ? '⏳ Đang chuyển...' : isListening ? '🎙️ Đang nghe' : '🎤 Mic'}
+          </Button>
+
+          <Button
+            type="button"
+            variant={guidedMode ? "secondary" : "ghost"}
+            className="flex-shrink-0 h-10 rounded-xl px-3"
+            onClick={() => setGuidedMode((prev) => !prev)}
+            disabled={isLoading}
+            title="Bật chế độ AI hướng dẫn từng bước"
+          >
+            🧭 Hướng dẫn
           </Button>
 
           {/* SIGMA POPOVER */}

@@ -192,6 +192,37 @@ export default function MindmapPage() {
 
   return (
     <div className="w-full h-full relative bg-slate-50/50">
+
+      <div className="w-full max-w-6xl mx-auto px-4 pt-6 grid gap-3 md:grid-cols-3">
+        <Card className="md:col-span-2 bg-white/80 backdrop-blur">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg">Trạng thái node</CardTitle>
+            <CardDescription>
+              Mặc định màu xám khi chưa mở, chuyển vàng khi đã mở node và xanh lá khi bài kiểm tra đạt &ge; 80% (được lưu vào hồ sơ).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <Circle className="w-4 h-4 text-gray-300" /> Mặc định
+            </div>
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <PlayCircle className="w-4 h-4 text-yellow-500" /> Đang học (đã mở node)
+            </div>
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+              <CheckCircle2 className="w-4 h-4 text-green-500" /> Đạt &gt;= 80%
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-emerald-50 border-emerald-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base text-emerald-800">Nhắc nhanh</CardTitle>
+            <CardDescription className="text-emerald-700">
+              Click node để chuyển sang trạng thái vàng, làm bài test kiến thức và đạt &ge;80% sẽ tự chuyển xanh lá và cập nhật trang cá nhân.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
       
       {viewMode === 'path' && (
         <div className="w-full h-full max-w-4xl mx-auto p-4 md:p-6 overflow-hidden flex flex-col">
