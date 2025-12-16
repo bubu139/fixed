@@ -8,13 +8,13 @@ const tests = [
   {
     id: 'gkh1-2024',
     name: 'Đề kiểm tra giữa học kì 1 - 2024',
-    description: 'Đề thi thử cho kỳ kiểm tra giữa học kỳ 1 môn Toán lớp 12.',
+    description: 'Đề thi thử cho kỳ kiểm tra giữa học kỳ 1 môn Toán lớp 12.'
   },
   {
     id: 'thptqg-2024-minhhoa',
     name: 'Đề minh họa THPT QG 2024',
-    description: 'Đề thi minh họa chính thức từ Bộ GD&ĐT cho kỳ thi tốt nghiệp THPT 2024.',
-  },
+    description: 'Đề thi minh họa chính thức từ Bộ GD&ĐT cho kỳ thi tốt nghiệp THPT 2024.'
+  }
 ];
 
 export default function TestsPage() {
@@ -24,9 +24,10 @@ export default function TestsPage() {
         <h1 className="text-3xl font-bold mb-6">Danh sách bài kiểm tra</h1>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {/* ⚡ Bài kiểm tra theo chủ đề → chuyển sang mindmap */}
-          <Link href="/mindmap">
-            <Card className="hover:border-primary hover:shadow-lg transition-all border-primary/40 cursor-pointer">
+
+          {/* ⚡ Bài kiểm tra theo chủ đề */}
+          <Link href="/test">
+            <Card className="hover:border-primary hover:shadow-lg transition-all border-primary/40">
               <CardHeader>
                 <CardTitle className="flex items-start gap-3">
                   <BrainCircuit className="text-primary mt-1 flex-shrink-0" />
@@ -41,10 +42,10 @@ export default function TestsPage() {
             </Card>
           </Link>
 
-          {/* ⭐ Danh sách đề kiểm tra cố định */}
+          {/* ⭐ Danh sách đề kiểm tra */}
           {tests.map((test) => (
             <Link href={`/tests/${test.id}`} key={test.id}>
-              <Card className="hover:border-primary hover:shadow-lg transition-all cursor-pointer">
+              <Card className="hover:border-primary hover:shadow-lg transition-all">
                 <CardHeader>
                   <CardTitle className="flex items-start gap-3">
                     <FileText className="text-primary mt-1 flex-shrink-0" />
@@ -57,6 +58,7 @@ export default function TestsPage() {
               </Card>
             </Link>
           ))}
+
         </div>
       </div>
     </main>

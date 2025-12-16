@@ -6,42 +6,50 @@ import type { MindMapNode, MindMapNodeWithState, NodePosition, Edge } from '@/ty
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { MindMapNode as MindMapNodeComponent } from './mind-map-node';
 
-// ---- FIX: Định nghĩa type mở rộng để TypeScript không báo lỗi max_score ----
 type NodeProgressWithMaxScore = NodeProgress & {
   max_score?: number;
 };
-// ---- END FIX ----
 
 type MindMapCanvasProps = {
   data: MindMapNode;
-  progress: Record<string, NodeProgressWithMaxScore>; // Sử dụng type mở rộng ở đây
+  progress: Record<string, NodeProgressWithMaxScore>;
   selectedNodeId: string | null;
   onNodeClick: (node: MindMapNode) => void;
 };
 
-// ---- FIX: Cập nhật logic màu sắc chuẩn theo thang điểm 100 ----
+// ✅ LOGIC MÀU MỚI: Tất cả node mặc định Vàng, chỉ Xanh Lá khi >= 80 điểm
 const getStatusColor = (p?: NodeProgressWithMaxScore) => {
-  if (!p) return "#2196F3"; // Mặc định: Xanh dương (Chưa học)
+  if (!p) return "#FFC107"; // Mặc định: Vàng (Chưa làm test)
 
-  // Ưu tiên lấy max_score (điểm cao nhất), nếu không có thì lấy score
   const currentScore = p.max_score ?? p.score ?? 0;
 
-  // Logic màu dựa trên thang điểm 100
-  if (currentScore >= 80) return "#4CAF50"; // Xanh lá (Thành thạo)
-  if (currentScore >= 50) return "#FFC107"; // Vàng (Đang học/Khá)
-  if (currentScore > 0) return "#FF9800";   // Cam (Mới bắt đầu/Điểm thấp)
+  // Chỉ có 2 trạng thái:
+  // - Vàng (< 80): Đang học hoặc chưa đạt
+  // - Xanh Lá (>= 80): Đã thành thạo
+  if (currentScore >= 80) {
+    return "#4CAF50"; // Xanh lá (Mastered)
+  }
 
-  return "#2196F3"; // Xanh dương (Chưa có điểm)
+  return "#FFC107"; // Vàng (Learning/Not Started)
 };
-// ---- END FIX ----
 
-// Helper to initialize nodes with state from the raw data
 const initializeNodes = (node: MindMapNode): Map<string, MindMapNodeWithState> => {
   const map = new Map<string, MindMapNodeWithState>();
+  const visited = new Set<string>(); // 1. Thêm Set để theo dõi node đã duyệt
+
   function recurse(n: MindMapNode, parentId: string | null, level: number) {
+    if (visited.has(n.id)) return; // 2. Nếu đã duyệt thì dừng lại ngay
+    visited.add(n.id);
+
     const isRoot = parentId === null;
     map.set(n.id, { ...n, isExpanded: isRoot, parentId, level });
-    n.children.forEach(child => recurse(child, n.id, level + 1));
+    
+    // Chỉ duyệt con nếu nó chưa được thăm (để an toàn hơn)
+    n.children.forEach(child => {
+        if (!visited.has(child.id)) {
+            recurse(child, n.id, level + 1)
+        }
+    });
   }
   recurse(node, null, 0);
   return map;
@@ -98,9 +106,7 @@ export function MindMapCanvas({
 
     const calculateBranchSize = (nodeId: string): number => {
       const children = getVisibleChildren(nodeId);
-      if (children.length === 0) {
-        return 1;
-      }
+      if (children.length === 0) return 1;
       return children.reduce((sum, child) => sum + calculateBranchSize(child.id), 0);
     };
 
@@ -184,7 +190,6 @@ export function MindMapCanvas({
     setEdges(newEdges);
   }, [nodes, dimensions, draggingNode]);
 
-
   useEffect(() => {
     calculateLayout();
   }, [calculateLayout]);
@@ -206,9 +211,8 @@ export function MindMapCanvas({
     setEdges(newEdges);
   }, [nodes]);
 
-
   const handleToggleNode = (nodeId: string) => {
-    setDraggingNode(null); // Stop dragging when toggling
+    setDraggingNode(null);
     setNodes(prevNodes => {
       const newNodes = new Map(prevNodes);
       const node = newNodes.get(nodeId);
@@ -230,12 +234,9 @@ export function MindMapCanvas({
     const x = (e.clientX - rect.left - viewTransform.x) / viewTransform.scale;
     const y = (e.clientY - rect.top - viewTransform.y) / viewTransform.scale;
 
-    setPositions(prev => {
-      const newPos = new Map(prev);
-      newPos.set(draggingNode, { x, y });
-      updateEdges(newPos);
-      return newPos;
-    });
+useEffect(() => {
+  updateEdges(positions);
+}, [positions, updateEdges]);
   }, [draggingNode, viewTransform, updateEdges]);
 
   const handleDragEnd = useCallback(() => {
@@ -302,7 +303,6 @@ export function MindMapCanvas({
     };
   }, [isPanning, draggingNode, handleDrag, handleDragEnd, handleCanvasMouseMove]);
 
-
   const visibleNodes = Array.from(nodes.values()).filter(node => {
     if (node.level === 0) return true;
     const parent = nodes.get(node.parentId!);
@@ -349,10 +349,8 @@ export function MindMapCanvas({
           </g>
         </svg>
         {visibleNodes.map(node => {
-          // ---- FIX: Lấy dữ liệu điểm số chính xác ----
           const nodeProgress = progress[node.id];
           const displayScore = nodeProgress?.max_score ?? nodeProgress?.score;
-          // ---- END FIX ----
 
           return (
             <MindMapNodeComponent

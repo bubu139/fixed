@@ -10,43 +10,26 @@ import ReactMarkdown from 'react-markdown';
 import { Loader, Sparkles, PencilRuler, BrainCircuit } from 'lucide-react';
 import { Separator } from '../ui/separator';
 import { API_BASE_URL } from '@/lib/utils';
-// 🔥 FIX 1: Import API trực tiếp thay vì hook cũ
-import { openNode, type NodeProgress } from "@/lib/nodeProgressApi";
-import { useUser } from "@/supabase/auth/use-user"; // Import hook user nếu có, hoặc dùng context
+import { type NodeProgress } from "@/lib/nodeProgressApi";
+import { useUser } from "@/supabase/auth/use-user";
 
 type NodeDetailDialogProps = {
   node: MindMapNode;
   isOpen: boolean;
   onClose: () => void;
-  // 🔥 FIX 2: Nhận progress từ cha để đảm bảo đồng bộ dữ liệu
-  currentProgress?: NodeProgress; 
+  currentProgress?: NodeProgress;
 };
 
 export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: NodeDetailDialogProps) {
-  // Lấy user thật thay vì hardcode "test-user"
-  const { user } = useUser(); 
+  const { user } = useUser();
   const userId = user?.id;
 
-  // Khi mở dialog -> Gọi API mở node (đánh dấu là đang học)
-  useEffect(() => {
-    if (isOpen && node && userId) {
-      // Gọi API ngầm, không cần chờ kết quả để chặn UI
-      openNode(userId, node.id).catch(console.error);
-    }
-  }, [isOpen, node, userId]);
-
-  // 🔥 FIX 3: Ưu tiên hiển thị Max Score
-  // Nếu không có max_score thì mới lấy score, fallback về 0
+  // ✅ LOGIC MỚI: Chỉ có 2 trạng thái màu
   const rawScore = Math.round(currentProgress?.max_score ?? currentProgress?.score ?? 0);
 
-  // 🔥 FIX 4: Cập nhật thang màu giống MindMapCanvas (>=80, >=50)
-  let colorClass = "text-gray-400 bg-gray-100 border-gray-200"; // Default
+  let colorClass = "text-yellow-700 bg-yellow-100 border-yellow-300"; // Mặc định: Vàng
   if (rawScore >= 80) {
-    colorClass = "text-green-700 bg-green-100 border-green-300"; // Mastered
-  } else if (rawScore >= 50) {
-    colorClass = "text-yellow-700 bg-yellow-100 border-yellow-300"; // Learning (Good)
-  } else if (rawScore > 0) {
-    colorClass = "text-orange-700 bg-orange-100 border-orange-300"; // Started (Low)
+    colorClass = "text-green-700 bg-green-100 border-green-300"; // Xanh Lá (Mastered)
   }
 
   const [summary, setSummary] = useState('');
@@ -111,9 +94,9 @@ export function NodeDetailDialog({ node, isOpen, onClose, currentProgress }: Nod
           </DialogTitle>
 
           <div className="mt-2 text-sm">
-            <span className="font-semibold">Mức độ thành thạo: </span>
+            <span className="font-semibold">Trạng thái: </span>
             <span className={`font-bold px-2 py-1 rounded-lg border ${colorClass}`}>
-              {rawScore > 0 ? `${rawScore}%` : "Chưa kiểm tra"}
+              {rawScore >= 80 ? `✅ Đã thành thạo (${rawScore}%)` : `📚 Đang học (${rawScore}%)`}
             </span>
           </div>
         </DialogHeader>

@@ -1,19 +1,18 @@
-// frontend_nextjs/src/components/test/TestRenderer.tsx
 'use client';
 
 import { updateNodeScore } from "@/lib/nodeProgressApi";
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser } from '@/supabase/auth/use-user';
 import { useSupabase } from '@/supabase';
 import { TestHistoryService } from '@/services/test-history.service';
 import type { Test, Question } from '@/types/test-schema';
-import type {
-  TestAttempt,
-  WeakTopic,
-  TestDifficulty,
-  TestAnswer
-} from '@/types/test-history';
+import type { 
+  TestAttempt, 
+  WeakTopic, 
+  TestDifficulty, 
+  TestAnswer 
+} from '@/types/test-history'; 
 import { QuestionComponent } from './Question';
 import { TestResultDetail } from './TestResultDetail';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { AlertCircle, Loader, ChevronLeft, ChevronRight } from 'lucide-react';
 
-// 🔹 THÊM: cache đề theo attemptId
+// 🔹 THÊM: cache đề theo từng attempt
 import { saveTestResultToCache } from '@/lib/answer-review-cache';
 
 function normalizeType(type: string) {
@@ -46,7 +45,7 @@ interface Props {
   onRetry?: () => void;
   testId: string;
   topic: string;
-  difficulty: TestDifficulty;
+  difficulty: TestDifficulty; 
   nodeId?: string | null;
   isNodeTest?: boolean;
 }
@@ -97,9 +96,7 @@ export function TestRenderer({
   const isBusy = isLoading || isSavingHistory;
 
   const getSafeUserAnswer = (question: Question, rawAnswer: any) => {
-    const qType = normalizeType(question.type);
-
-    if (qType === 'true-false') {
+    if (question.type === 'true-false') {
       if (!Array.isArray(rawAnswer)) return Array(4).fill(null);
       const safeAnswer = Array(4).fill(null);
       rawAnswer.forEach((val, index) => {
@@ -107,28 +104,18 @@ export function TestRenderer({
       });
       return safeAnswer;
     }
-
-    if (qType === 'short-answer') {
-      if (!Array.isArray(rawAnswer)) return Array(6).fill('');
-      const safeAnswer = Array(6).fill('');
-      rawAnswer.forEach((val, index) => {
-        if (index < 6) safeAnswer[index] = val ?? '';
-      });
-      return safeAnswer;
+    if (question.type === 'short-answer') {
+      return Array.isArray(rawAnswer) ? rawAnswer : Array(6).fill('');
     }
-
     return rawAnswer;
   };
 
-  const handleAnswerChange = useCallback(
-    (answer: any) => {
-      setAnswers(prev => ({
-        ...prev,
-        [currentQuestion.id]: answer,
-      }));
-    },
-    [currentQuestion.id],
-  );
+  const handleAnswerChange = useCallback((answer: any) => {
+    setAnswers(prev => ({
+      ...prev,
+      [currentQuestion.id]: answer,
+    }));
+  }, [currentQuestion.id]);
 
   const handleNextQuestion = () => {
     if (currentQuestionIndex < allQuestions.length - 1) {
@@ -153,7 +140,7 @@ export function TestRenderer({
       return JSON.stringify(safeUserAnswer) === JSON.stringify((question as any).answer);
     }
     if (qType === 'short-answer') {
-      return (safeUserAnswer as string[]).join('') === (question as any).answer;
+      return safeUserAnswer?.join('') === (question as any).answer;
     }
     return false;
   };
@@ -163,11 +150,11 @@ export function TestRenderer({
     setError(null);
 
     try {
-      // 1. TÍNH ĐIỂM
+      // BƯỚC 1: Tính điểm
       let correctCount = 0;
-      const questionScore = 100 / allQuestions.length;
+      const questionScore = 100 / allQuestions.length; 
 
-      const answeredQuestions: TestAnswer[] = allQuestions.map(q => {
+      const answeredQuestions: TestAnswer[] = allQuestions.map((q) => {
         const rawUserAnswer = answers[q.id];
         const userAnswer = getSafeUserAnswer(q, rawUserAnswer);
         const isCorrect = checkAnswer(q, userAnswer);
@@ -177,20 +164,22 @@ export function TestRenderer({
           questionId: q.id,
           questionType: normalizeType(q.type) as 'multiple-choice' | 'true-false' | 'short-answer',
           prompt: q.prompt,
-          userAnswer,
+          userAnswer: userAnswer,
           correctAnswer: (q as any).answer,
-          isCorrect,
-          topic: (q as any).topic || topic,
+          isCorrect: isCorrect,
+          topic: (q as any).topic || topic, 
           score: isCorrect ? questionScore : 0,
         };
       });
 
+      // Làm tròn điểm
       const rawScore = correctCount * questionScore;
-      const score = Math.round(rawScore);
+      const score = Math.round(rawScore); 
 
+      // Cập nhật node score (nếu là bài mindmap)
       if (isNodeTest && user && nodeId) {
         updateNodeScore(user.id, nodeId, score).catch(err => {
-          console.error("Lỗi khi update node score:", err);
+          console.error("⚠️ Lỗi ngầm khi update node score:", err);
         });
       }
 
@@ -202,41 +191,32 @@ export function TestRenderer({
       const trueFalseQuestions = answeredQuestions.filter(a => a.questionType === 'true-false');
       const shortAnswerQuestions = answeredQuestions.filter(a => a.questionType === 'short-answer');
 
-      const multipleChoiceScore =
-        multipleChoiceQuestions.length > 0
-          ? (multipleChoiceQuestions.filter(a => a.isCorrect).length / multipleChoiceQuestions.length) * 100
-          : 0;
-      const trueFalseScore =
-        trueFalseQuestions.length > 0
-          ? (trueFalseQuestions.filter(a => a.isCorrect).length / trueFalseQuestions.length) * 100
-          : 0;
-      const shortAnswerScore =
-        shortAnswerQuestions.length > 0
-          ? (shortAnswerQuestions.filter(a => a.isCorrect).length / shortAnswerQuestions.length) * 100
-          : 0;
+      const multipleChoiceScore = multipleChoiceQuestions.length > 0 ? (multipleChoiceQuestions.filter(a => a.isCorrect).length / multipleChoiceQuestions.length) * 100 : 0;
+      const trueFalseScore = trueFalseQuestions.length > 0 ? (trueFalseQuestions.filter(a => a.isCorrect).length / trueFalseQuestions.length) * 100 : 0;
+      const shortAnswerScore = shortAnswerQuestions.length > 0 ? (shortAnswerQuestions.filter(a => a.isCorrect).length / shortAnswerQuestions.length) * 100 : 0;
 
       const fullAttempt: TestAttempt = {
         id: `local-${Date.now()}`,
-        testId,
+        testId: testId,
         testTitle: testData.title,
         userId: user ? user.id : 'guest_user',
         answers: answeredQuestions,
-        score,
+        score: score,
         correctAnswers: correctCount,
         totalQuestions: allQuestions.length,
-        timeSpent,
-        startedAt,
-        completedAt,
-        difficulty,
-        topic,
-        multipleChoiceScore,
-        trueFalseScore,
-        shortAnswerScore,
+        timeSpent: timeSpent,
+        startedAt: startedAt,
+        completedAt: completedAt,
+        difficulty: difficulty,
+        topic: topic,
+        multipleChoiceScore: multipleChoiceScore,
+        trueFalseScore: trueFalseScore,
+        shortAnswerScore: shortAnswerScore,
         submittedAt: completedAt,
       };
 
-      // 2. THỐNG KÊ WEAK TOPICS
-      const topicStats = new Map<string, { correct: number; total: number }>();
+      // BƯỚC 2: Thống kê Topic yếu local
+      const topicStats = new Map<string, { correct: number, total: number }>();
       for (const answer of answeredQuestions) {
         const answerTopic = (answer as any).topic || topic;
         if (!topicStats.has(answerTopic)) {
@@ -244,7 +224,9 @@ export function TestRenderer({
         }
         const stats = topicStats.get(answerTopic)!;
         stats.total++;
-        if (answer.isCorrect) stats.correct++;
+        if (answer.isCorrect) {
+          stats.correct++;
+        }
       }
 
       const localWeakTopics: WeakTopic[] = [];
@@ -260,12 +242,12 @@ export function TestRenderer({
         }
       });
       localWeakTopics.sort((a, b) => a.accuracy - b.accuracy);
-
-      // 3. GỌI AI PHÂN TÍCH
+      
+      // BƯỚC 3: Gửi dữ liệu cho AI phân tích
       const analysisRequest = {
         userId: fullAttempt.userId,
         testAttempt: fullAttempt,
-        weakTopics: localWeakTopics,
+        weakTopics: localWeakTopics
       };
 
       const response = await fetch(`${API_BASE_URL}/api/analyze-test-result`, {
@@ -278,30 +260,36 @@ export function TestRenderer({
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Lỗi khi gọi AI phân tích.');
       }
-
+      
       const aiAnalysis: AiAnalysisResult = await response.json();
 
-      // 4. LƯU LỊCH SỬ + LƯU CACHE ĐỀ THEO attemptId
+      // BƯỚC 4: Lưu lịch sử + LƯU CACHE ĐỀ THEO ATTEMPT
       let persistedAttempt = fullAttempt;
-
       if (supabase && user) {
         try {
           setIsSavingHistory(true);
           const historyService = new TestHistoryService(supabase);
           const { id: _localId, submittedAt: _submittedAt, ...attemptPayload } = fullAttempt;
+
+          // Lưu attempt vào Supabase → nhận về attemptId thật
           const attemptId = await historyService.saveTestAttempt(attemptPayload);
           persistedAttempt = { ...fullAttempt, id: attemptId };
 
-          // Lưu AI recommendation (như cũ)
+          // 🔹 RẤT QUAN TRỌNG:
+          // Lưu snapshot đề dùng cho trang /test-result/[attemptId]/answer
+          saveTestResultToCache(attemptId, {
+            test: testData,
+            topic,
+            difficulty,
+          });
+
           const summaryLines = [
             aiAnalysis.analysis ? `Đánh giá: ${aiAnalysis.analysis}` : null,
             aiAnalysis.strengths?.length ? `Điểm mạnh: ${aiAnalysis.strengths.join(', ')}` : null,
             aiAnalysis.weaknesses?.length ? `Điểm yếu: ${aiAnalysis.weaknesses.join(', ')}` : null,
             aiAnalysis.recommendations?.length ? `Lời khuyên: ${aiAnalysis.recommendations.join(' | ')}` : null,
-            aiAnalysis.suggestedTopics?.length
-              ? `Chủ đề nên học: ${aiAnalysis.suggestedTopics.join(', ')}`
-              : null,
-          ].filter(Boolean) as string[];
+            aiAnalysis.suggestedTopics?.length ? `Chủ đề nên học: ${aiAnalysis.suggestedTopics.join(', ')}` : null,
+          ].filter(Boolean);
 
           if (summaryLines.length > 0) {
             await historyService.saveAIRecommendation({
@@ -310,19 +298,8 @@ export function TestRenderer({
               generatedAt: new Date(),
             });
           }
-
-          // 🔹 QUAN TRỌNG: LƯU CHÍNH XÁC BỘ ĐỀ CỦA ATTEMPT NÀY VÀO CACHE
-          try {
-            saveTestResultToCache(attemptId, {
-              test: testData,
-              topic,
-              difficulty,
-            });
-          } catch (cacheErr) {
-            console.error('Không thể lưu cache đề thi:', cacheErr);
-          }
         } catch (saveError) {
-          console.error('Không thể lưu lịch sử làm bài:', saveError);
+          console.error('⚠️ Không thể lưu lịch sử làm bài:', saveError);
         } finally {
           setIsSavingHistory(false);
         }
@@ -331,11 +308,12 @@ export function TestRenderer({
       setTestResult({
         attempt: persistedAttempt,
         weakTopics: localWeakTopics,
-        aiAnalysis,
+        aiAnalysis: aiAnalysis
       });
       setIsSubmitted(true);
+
     } catch (err: any) {
-      console.error('Lỗi khi nộp bài:', err);
+      console.error('❌ Lỗi khi nộp bài:', err);
       setError(err.message || 'Có lỗi xảy ra khi nộp bài. Vui lòng thử lại.');
     } finally {
       setIsLoading(false);
@@ -354,7 +332,7 @@ export function TestRenderer({
     const topicsToPractice = testResult?.aiAnalysis?.suggestedTopics?.length
       ? testResult.aiAnalysis.suggestedTopics
       : testResult?.weakTopics.map(t => t.topic);
-
+      
     const topicsParam = (topicsToPractice || []).join(',');
     router.push(`/tests/adaptive?topics=${encodeURIComponent(topicsParam)}`);
   };
@@ -403,15 +381,10 @@ export function TestRenderer({
               <CardDescription className="text-base">{topic}</CardDescription>
             </div>
             <Badge className="bg-indigo-600 text-white">
-              {difficulty === 'adaptive'
-                ? 'Thích ứng'
-                : difficulty === 'node'
-                ? 'Node Test'
-                : difficulty === 'hard'
-                ? 'Khó'
-                : difficulty === 'medium'
-                ? 'Trung bình'
-                : 'Dễ'}
+              {difficulty === 'adaptive' ? 'Thích ứng' : 
+               difficulty === 'node' ? 'Node Test' :
+               difficulty === 'hard' ? 'Khó' : 
+               difficulty === 'medium' ? 'Trung bình' : 'Dễ'}
             </Badge>
           </div>
         </CardHeader>
@@ -419,12 +392,8 @@ export function TestRenderer({
         <CardContent>
           <div className="space-y-3">
             <div className="flex justify-between text-sm text-muted-foreground">
-              <span>
-                Câu hỏi {currentQuestionIndex + 1} / {allQuestions.length}
-              </span>
-              <span>
-                Trả lời: {answeredCount} / {allQuestions.length}
-              </span>
+              <span>Câu hỏi {currentQuestionIndex + 1} / {allQuestions.length}</span>
+              <span>Trả lời: {answeredCount} / {allQuestions.length}</span>
             </div>
             <Progress value={progress} className="h-2.5" />
             <div className="text-xs text-muted-foreground">
@@ -484,11 +453,7 @@ export function TestRenderer({
                   className={`
                     w-full aspect-square rounded-lg font-semibold text-sm transition-all
                     ${isCurrent ? 'ring-2 ring-primary' : ''}
-                    ${
-                      isAnswered
-                        ? 'bg-green-100 text-green-900 hover:bg-green-200'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }
+                    ${isAnswered ? 'bg-green-100 text-green-900 hover:bg-green-200' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}
                   `}
                   title={`Câu ${idx + 1}${isAnswered ? ' (Đã trả lời)' : ''}`}
                 >
@@ -507,8 +472,7 @@ export function TestRenderer({
               <div className="flex items-start gap-3 text-amber-900">
                 <AlertCircle className="w-5 h-5 mt-0.5 flex-shrink-0" />
                 <p className="text-sm">
-                  Bạn cần trả lời tất cả <strong>{allQuestions.length - answeredCount}</strong> câu hỏi còn lại trước khi
-                  nộp bài.
+                  Bạn cần trả lời tất cả <strong>{allQuestions.length - answeredCount}</strong> câu hỏi còn lại trước khi nộp bài.
                 </p>
               </div>
             )}
