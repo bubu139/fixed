@@ -6,27 +6,30 @@ import { NodeDetailDialog } from "@/components/mind-map/node-detail-dialog";
 import { mindMapData } from "@/lib/mindmap-data";
 import type { MindMapNode } from "@/types/mindmap";
 
-import {
-  getNodeProgress,
-  openNode,
-  NodeProgress,
-} from "@/lib/nodeProgressApi";
+import { getNodeProgress, openNode } from "@/lib/nodeProgressApi";
+import type { NodeProgress, NodeStatus } from "@/lib/nodeProgressApi";
 
 import { useUser } from "@/supabase/auth/use-user";
 import { Button } from "@/components/ui/button";
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { 
-  Network, 
-  ListTree, 
-  ArrowLeft, 
-  CheckCircle2, 
-  Circle, 
-  ChevronRight, 
-  ChevronDown, 
+import {
+  Network,
+  ListTree,
+  ArrowLeft,
+  CheckCircle2,
+  Circle,
+  ChevronRight,
+  ChevronDown,
   BookOpen,
-  PlayCircle
+  PlayCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -40,16 +43,21 @@ interface LearningPathItemProps {
   onNodeClick: (node: MindMapNode) => void;
 }
 
-const LearningPathItem = ({ node, level, progress, onNodeClick }: LearningPathItemProps) => {
+const LearningPathItem = ({
+  node,
+  level,
+  progress,
+  onNodeClick,
+}: LearningPathItemProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const hasChildren = node.children && node.children.length > 0;
-  
-  // Logic hiển thị icon dựa trên node_color
+
+  // Lấy trạng thái từ progress (status: not_started | learning | mastered)
   const nodeProg = progress[node.id];
-  const color = nodeProg?.node_color ?? 0;
-  
-  const isMastered = color === 2; // Green
-  const isLearning = color === 1; // Yellow
+  const status: NodeStatus = nodeProg?.status ?? "not_started";
+
+  const isMastered = status === "mastered"; // xanh lá
+  const isLearning = status === "learning"; // vàng
 
   const handleRowClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -66,56 +74,79 @@ const LearningPathItem = ({ node, level, progress, onNodeClick }: LearningPathIt
   };
 
   const StatusIcon = () => {
-    if (isMastered) return <CheckCircle2 className="w-5 h-5 text-green-500 fill-green-100" />;
-    if (isLearning) return <PlayCircle className="w-5 h-5 text-yellow-500 fill-yellow-100" />;
+    if (isMastered)
+      return (
+        <CheckCircle2 className="w-5 h-5 text-green-500 fill-green-100" />
+      );
+    if (isLearning)
+      return (
+        <PlayCircle className="w-5 h-5 text-yellow-500 fill-yellow-100" />
+      );
     return <Circle className="w-5 h-5 text-gray-300" />;
   };
 
   return (
     <div className="w-full select-none">
-      <div 
+      <div
         className={cn(
           "flex items-center p-3 my-1 rounded-lg cursor-pointer transition-colors border group",
-          level === 0 ? "bg-white border-gray-200 hover:border-blue-300 shadow-sm" : "border-transparent hover:bg-slate-100/80",
-          level > 0 && "ml-4 border-l-2 border-l-gray-100 border-y-0 border-r-0 rounded-none pl-4",
-          isOpen && hasChildren && "bg-slate-50"
+          level === 0
+            ? "bg-white border-gray-200 hover:border-blue-300 shadow-sm"
+            : "border-transparent hover:bg-slate-100/80",
+          level > 0 &&
+            "ml-4 border-l-2 border-l-gray-100 border-y-0 border-r-0 rounded-none pl-4",
+          isOpen && hasChildren && "bg-slate-50",
         )}
         onClick={handleRowClick}
       >
         <div className="mr-2 shrink-0">
           {hasChildren ? (
-            isOpen ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />
+            isOpen ? (
+              <ChevronDown className="w-4 h-4 text-slate-400" />
+            ) : (
+              <ChevronRight className="w-4 h-4 text-slate-400" />
+            )
           ) : (
-            <div className="w-4 h-4" /> 
+            <div className="w-4 h-4" />
           )}
         </div>
-        <div className="mr-3 shrink-0"><StatusIcon /></div>
+        <div className="mr-3 shrink-0">
+          <StatusIcon />
+        </div>
         <div className="flex-1 min-w-0 mr-2">
-          <h3 className={cn(
-            "font-medium truncate",
-            level === 0 ? "text-lg text-slate-800" : "text-sm text-slate-700",
-            isLearning && "text-blue-700 font-semibold"
-          )}>
+          <h3
+            className={cn(
+              "font-medium truncate",
+              level === 0 ? "text-lg text-slate-800" : "text-sm text-slate-700",
+              isLearning && "text-blue-700 font-semibold",
+            )}
+          >
             {node.label}
           </h3>
           {node.description && (
-            <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">{node.description}</p>
+            <p className="text-xs text-slate-400 mt-0.5 line-clamp-1">
+              {node.description}
+            </p>
           )}
         </div>
-        <Button 
-            variant="ghost" size="sm" 
-            className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100" 
-            onClick={handleOpenDetail}
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 w-8 p-0 opacity-0 group-hover:opacity-100 transition-opacity focus:opacity-100"
+          onClick={handleOpenDetail}
         >
-            <BookOpen className="w-4 h-4 text-blue-500" />
+          <BookOpen className="w-4 h-4 text-blue-500" />
         </Button>
       </div>
       {isOpen && hasChildren && (
         <div className="border-l border-dashed border-gray-200 ml-5 pl-1 animate-in slide-in-from-top-2 duration-200">
           {node.children.map((child) => (
-            <LearningPathItem 
-              key={child.id} node={child} level={level + 1} 
-              progress={progress} onNodeClick={onNodeClick}
+            <LearningPathItem
+              key={child.id}
+              node={child}
+              level={level + 1}
+              progress={progress}
+              onNodeClick={onNodeClick}
             />
           ))}
         </div>
@@ -131,8 +162,10 @@ export default function MindmapPage() {
   const { user } = useUser();
   const userId = user?.id || "";
 
-  const [viewMode, setViewMode] = useState<'mindmap' | 'path'>('mindmap');
-  const [selectedChapter, setSelectedChapter] = useState<MindMapNode | null>(null);
+  const [viewMode, setViewMode] = useState<"mindmap" | "path">("mindmap");
+  const [selectedChapter, setSelectedChapter] = useState<MindMapNode | null>(
+    null,
+  );
   const [selectedNode, setSelectedNode] = useState<MindMapNode | null>(null);
   const [progress, setProgress] = useState<Record<string, NodeProgress>>({});
   const [loading, setLoading] = useState(true);
@@ -150,24 +183,20 @@ export default function MindmapPage() {
         setLoading(false);
       }
     };
-    load();
+    void load();
   }, [userId]);
 
-  // HANDLE NODE CLICK (LOGIC QUAN TRỌNG)
+  // HANDLE NODE CLICK
   async function handleNodeClick(node: MindMapNode) {
     setSelectedNode(node);
 
-    // Lấy trạng thái hiện tại từ danh sách đã tải
     const currentStatus = progress[node.id];
 
-    // Logic mới:
-    // Nếu chưa có dữ liệu (undefined) HOẶC đang là màu Xanh Dương (0)
-    // -> Gọi API openNode để chuyển sang màu Vàng (1)
-    if (!currentStatus || currentStatus.node_color === 0) {
+    // Nếu chưa có trạng thái hoặc đang ở not_started → mở node, chuyển sang learning
+    if (!currentStatus || currentStatus.status === "not_started") {
       try {
         const updated = await openNode(userId, node.id);
-        
-        // Cập nhật State ngay lập tức để UI đổi màu
+
         setProgress((prev) => ({
           ...prev,
           [node.id]: updated,
@@ -176,29 +205,33 @@ export default function MindmapPage() {
         console.error("Lỗi khi mở node:", error);
       }
     }
-    // Nếu node_color đã là 1 (Vàng) hoặc 2 (Xanh lá) thì KHÔNG gọi lại để tránh reset
+    // Nếu đã learning / mastered thì giữ nguyên, không gọi API nữa.
   }
 
   const subjects = useMemo(() => mindMapData.children || [], []);
 
-  if (loading) return (
-    <div className="w-full h-full flex items-center justify-center bg-slate-50">
+  if (loading)
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-2">
-            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-            <p className="text-slate-500 font-medium">Đang tải dữ liệu học tập...</p>
+          <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-slate-500 font-medium">
+            Đang tải dữ liệu học tập...
+          </p>
         </div>
-    </div>
-  );
+      </div>
+    );
 
   return (
     <div className="w-full h-full relative bg-slate-50/50">
-
+      {/* Legend */}
       <div className="w-full max-w-6xl mx-auto px-4 pt-6 grid gap-3 md:grid-cols-3">
         <Card className="md:col-span-2 bg-white/80 backdrop-blur">
           <CardHeader className="pb-2">
             <CardTitle className="text-lg">Trạng thái node</CardTitle>
             <CardDescription>
-              Mặc định màu xám khi chưa mở, chuyển vàng khi đã mở node và xanh lá khi bài kiểm tra đạt &ge; 80% (được lưu vào hồ sơ).
+              Mặc định màu xám khi chưa mở, chuyển vàng khi đã mở node và xanh
+              lá khi bài kiểm tra đạt &ge; 80% (được lưu vào hồ sơ).
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-3">
@@ -206,7 +239,8 @@ export default function MindmapPage() {
               <Circle className="w-4 h-4 text-gray-300" /> Mặc định
             </div>
             <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
-              <PlayCircle className="w-4 h-4 text-yellow-500" /> Đang học (đã mở node)
+              <PlayCircle className="w-4 h-4 text-yellow-500" /> Đang học (đã
+              mở node)
             </div>
             <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <CheckCircle2 className="w-4 h-4 text-green-500" /> Đạt &gt;= 80%
@@ -216,114 +250,178 @@ export default function MindmapPage() {
 
         <Card className="bg-emerald-50 border-emerald-200">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base text-emerald-800">Nhắc nhanh</CardTitle>
+            <CardTitle className="text-base text-emerald-800">
+              Nhắc nhanh
+            </CardTitle>
             <CardDescription className="text-emerald-700">
-              Click node để chuyển sang trạng thái vàng, làm bài test kiến thức và đạt &ge;80% sẽ tự chuyển xanh lá và cập nhật trang cá nhân.
+              Click node để chuyển sang trạng thái vàng, làm bài test kiến thức
+              và đạt &ge;80% sẽ tự chuyển xanh lá và cập nhật trang cá nhân.
             </CardDescription>
           </CardHeader>
         </Card>
       </div>
-      
-      {viewMode === 'path' && (
+
+      {/* View: Path */}
+      {viewMode === "path" && (
         <div className="w-full h-full max-w-4xl mx-auto p-4 md:p-6 overflow-hidden flex flex-col">
           <div className="mb-6 flex-shrink-0">
             <h1 className="text-2xl font-bold text-slate-800 flex items-center gap-3">
-               <div className="p-2 bg-blue-100 rounded-lg"><ListTree className="w-6 h-6 text-blue-600" /></div>
-               Lộ trình học cá nhân
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <ListTree className="w-6 h-6 text-blue-600" />
+              </div>
+              Lộ trình học cá nhân
             </h1>
-            <p className="text-slate-500 mt-1 ml-1">Theo dõi tiến độ và học tập theo trình tự từng bước.</p>
+            <p className="text-slate-500 mt-1 ml-1">
+              Theo dõi tiến độ và học tập theo trình tự từng bước.
+            </p>
           </div>
           <ScrollArea className="flex-1 pr-4 -mr-4">
-             <div className="pb-24 pl-1">
-                {subjects.map(subject => (
-                  <div key={subject.id} className="mb-8">
-                    <h2 className="text-xl font-bold text-slate-700 mb-4 flex items-center gap-2">
-                      <span className="w-1.5 h-6 bg-blue-500 rounded-full inline-block"></span>
-                      {subject.label}
-                    </h2>
-                    <div className="space-y-1">
-                        {subject.children.map(chapter => (
-                        <LearningPathItem 
-                            key={chapter.id} node={chapter} level={0}
-                            progress={progress} onNodeClick={handleNodeClick}
-                        />
-                        ))}
-                    </div>
+            <div className="pb-24 pl-1">
+              {subjects.map((subject) => (
+                <div key={subject.id} className="mb-8">
+                  <h2 className="text-xl font-bold text-slate-700 mb-4 flex items-center gap-2">
+                    <span className="w-1.5 h-6 bg-blue-500 rounded-full inline-block" />
+                    {subject.label}
+                  </h2>
+                  <div className="space-y-1">
+                    {subject.children.map((chapter) => (
+                      <LearningPathItem
+                        key={chapter.id}
+                        node={chapter}
+                        level={0}
+                        progress={progress}
+                        onNodeClick={handleNodeClick}
+                      />
+                    ))}
                   </div>
-                ))}
-             </div>
+                </div>
+              ))}
+            </div>
           </ScrollArea>
         </div>
       )}
 
-      {viewMode === 'mindmap' && (
+      {/* View: Mindmap */}
+      {viewMode === "mindmap" && (
         <div className="w-full h-full">
-            {!selectedChapter ? (
-                <div className="w-full h-full p-4 md:p-8 overflow-auto">
-                    <div className="max-w-6xl mx-auto">
-                        <div className="mb-10 text-center space-y-2">
-                            <h1 className="text-3xl font-bold text-slate-800">Thư viện kiến thức Toán 12</h1>
-                            <p className="text-slate-500 max-w-lg mx-auto">Chọn một chương để khám phá kiến thức.</p>
-                        </div>
-                        <Tabs defaultValue={subjects[0]?.id} className="w-full">
-                            <TabsList className="grid w-full max-w-md mx-auto grid-cols-2 mb-8 h-12 p-1 bg-slate-200/50">
-                                {subjects.map(sub => (
-                                    <TabsTrigger key={sub.id} value={sub.id} className="h-full text-base">{sub.label}</TabsTrigger>
-                                ))}
-                            </TabsList>
-                            {subjects.map(subject => (
-                                <TabsContent key={subject.id} value={subject.id}>
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                        {subject.children.map(chapter => {
-                                            const totalNodes = chapter.children?.length || 0;
-                                            // Đếm số lượng node Xanh Lá (2)
-                                            const completedNodes = chapter.children?.filter(c => progress[c.id]?.node_color === 2).length || 0;
-                                            return (
-                                                <Card key={chapter.id} className="cursor-pointer hover:shadow-lg transition-all group border-slate-200 hover:border-blue-400" onClick={() => setSelectedChapter(chapter)}>
-                                                    <CardHeader className="pb-3">
-                                                        <CardTitle className="text-lg group-hover:text-blue-700">{chapter.label}</CardTitle>
-                                                        <CardDescription>{totalNodes} chủ đề chính</CardDescription>
-                                                    </CardHeader>
-                                                    <CardContent>
-                                                        <div className="flex items-center justify-between text-sm text-slate-500 bg-slate-50 p-2 rounded-md">
-                                                            <div className="flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-green-500" /><span>Hoàn thành:</span></div>
-                                                            <span className="font-semibold text-slate-700">{completedNodes} / {totalNodes}</span>
-                                                        </div>
-                                                    </CardContent>
-                                                </Card>
-                                            );
-                                        })}
-                                    </div>
-                                </TabsContent>
-                            ))}
-                        </Tabs>
-                    </div>
+          {!selectedChapter ? (
+            <div className="w-full h-full p-4 md:p-8 overflow-auto">
+              <div className="max-w-6xl mx-auto">
+                <div className="mb-10 text-center space-y-2">
+                  <h1 className="text-3xl font-bold text-slate-800">
+                    Thư viện kiến thức Toán 12
+                  </h1>
+                  <p className="text-slate-500 max-w-lg mx-auto">
+                    Chọn một chương để khám phá kiến thức.
+                  </p>
                 </div>
-            ) : (
-                <div className="w-full h-full relative bg-white">
-                    <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-white/90 backdrop-blur p-1.5 pr-4 rounded-lg shadow-sm border border-slate-200">
-                        <Button variant="ghost" size="sm" onClick={() => setSelectedChapter(null)} className="gap-2 hover:bg-slate-100">
-                            <ArrowLeft className="w-4 h-4" /> <span className="hidden sm:inline">Quay lại</span>
-                        </Button>
-                        <div className="h-4 w-px bg-slate-300 mx-1" />
-                        <span className="font-semibold text-slate-700 text-sm max-w-[200px] truncate">{selectedChapter.label}</span>
-                    </div>
-                    <MindMapCanvas
-                        data={selectedChapter}
-                        progress={progress}
-                        selectedNodeId={selectedNode?.id ?? null}
-                        onNodeClick={handleNodeClick}
-                    />
-                </div>
-            )}
+                <Tabs defaultValue={subjects[0]?.id} className="w-full">
+                  <TabsList className="grid w-full max-w-md mx-auto grid-cols-2 mb-8 h-12 p-1 bg-slate-200/50">
+                    {subjects.map((sub) => (
+                      <TabsTrigger
+                        key={sub.id}
+                        value={sub.id}
+                        className="h-full text-base"
+                      >
+                        {sub.label}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+                  {subjects.map((subject) => (
+                    <TabsContent key={subject.id} value={subject.id}>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {subject.children.map((chapter) => {
+                          const totalNodes = chapter.children?.length || 0;
+                          const completedNodes =
+                            chapter.children?.filter(
+                              (c) =>
+                                progress[c.id]?.status === "mastered",
+                            ).length || 0;
+
+                          return (
+                            <Card
+                              key={chapter.id}
+                              className="cursor-pointer hover:shadow-lg transition-all group border-slate-200 hover:border-blue-400"
+                              onClick={() => setSelectedChapter(chapter)}
+                            >
+                              <CardHeader className="pb-3">
+                                <CardTitle className="text-lg group-hover:text-blue-700">
+                                  {chapter.label}
+                                </CardTitle>
+                                <CardDescription>
+                                  {totalNodes} chủ đề chính
+                                </CardDescription>
+                              </CardHeader>
+                              <CardContent>
+                                <div className="flex items-center justify-between text-sm text-slate-500 bg-slate-50 p-2 rounded-md">
+                                  <div className="flex items-center gap-1.5">
+                                    <CheckCircle2 className="w-4 h-4 text-green-500" />
+                                    <span>Hoàn thành:</span>
+                                  </div>
+                                  <span className="font-semibold text-slate-700">
+                                    {completedNodes} / {totalNodes}
+                                  </span>
+                                </div>
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    </TabsContent>
+                  ))}
+                </Tabs>
+              </div>
+            </div>
+          ) : (
+            <div className="w-full h-full relative bg-white">
+              <div className="absolute top-4 left-4 z-10 flex items-center gap-2 bg-white/90 backdrop-blur p-1.5 pr-4 rounded-lg shadow-sm border border-slate-200">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setSelectedChapter(null)}
+                  className="gap-2 hover:bg-slate-100"
+                >
+                  <ArrowLeft className="w-4 h-4" />{" "}
+                  <span className="hidden sm:inline">Quay lại</span>
+                </Button>
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+                <span className="font-semibold text-slate-700 text-sm max-w-[200px] truncate">
+                  {selectedChapter.label}
+                </span>
+              </div>
+              <MindMapCanvas
+                data={selectedChapter}
+                progress={progress}
+                selectedNodeId={selectedNode?.id ?? null}
+                onNodeClick={handleNodeClick}
+              />
+            </div>
+          )}
         </div>
       )}
 
+      {/* Toggle view buttons */}
       <div className="absolute bottom-6 right-6 z-50 flex flex-col gap-2">
-         <div className="bg-white p-1.5 rounded-full shadow-xl border border-slate-200 flex flex-col gap-2">
-            <Button variant={viewMode === 'mindmap' ? 'default' : 'ghost'} size="icon" className="rounded-full w-12 h-12" onClick={() => setViewMode('mindmap')} title="Mindmap"><Network className="w-6 h-6" /></Button>
-            <Button variant={viewMode === 'path' ? 'default' : 'ghost'} size="icon" className="rounded-full w-12 h-12" onClick={() => setViewMode('path')} title="Lộ trình"><ListTree className="w-6 h-6" /></Button>
-         </div>
+        <div className="bg-white p-1.5 rounded-full shadow-xl border border-slate-200 flex flex-col gap-2">
+          <Button
+            variant={viewMode === "mindmap" ? "default" : "ghost"}
+            size="icon"
+            className="rounded-full w-12 h-12"
+            onClick={() => setViewMode("mindmap")}
+            title="Mindmap"
+          >
+            <Network className="w-6 h-6" />
+          </Button>
+          <Button
+            variant={viewMode === "path" ? "default" : "ghost"}
+            size="icon"
+            className="rounded-full w-12 h-12"
+            onClick={() => setViewMode("path")}
+            title="Lộ trình"
+          >
+            <ListTree className="w-6 h-6" />
+          </Button>
+        </div>
       </div>
 
       {selectedNode && (
@@ -331,7 +429,7 @@ export default function MindmapPage() {
           isOpen
           node={selectedNode}
           onClose={() => setSelectedNode(null)}
-          currentProgress={progress[selectedNode.id]} 
+          currentProgress={progress[selectedNode.id]}
         />
       )}
     </div>

@@ -59,32 +59,50 @@ export async function updateNodeScore(userId: string, nodeId: string, score: num
 }
 
 // 3. GET PROGRESS (⚠️ QUAN TRỌNG NHẤT)
-export async function getNodeProgress(userId: string): Promise<Record<string, NodeProgress>> {
+export async function getNodeProgress(
+  userId: string
+): Promise<Record<string, NodeProgress>> {
   try {
     const { data, error } = await supabase
-      .from('node_progress')
-      // 👇 HÃY KIỂM TRA KỸ DÒNG NÀY: Phải có 'max_score'
-      .select('node_id, score, max_score') 
-      .eq('user_id', userId);
+      .from("node_progress")
+      .select("node_id, score, max_score") // nhớ bảng này phải tồn tại ở DB
+      .eq("user_id", userId);
 
-    if (error) throw error;
+    if (error) {
+      // log chi tiết nhưng không throw nữa
+      console.warn("[nodeProgressApi] Supabase error khi load progress:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
+      return {};
+    }
 
     const result: Record<string, NodeProgress> = {};
+
     (data || []).forEach((row: any) => {
-      // 👇 Logic này đảm bảo lấy điểm cao nhất để tô màu
-      const bestScore = row.max_score ?? row.score ?? 0;
-      
+      const currentScore = Number(row.score) || 0;
+      const maxScore = row.max_score != null ? Number(row.max_score) : 0;
+
+      // Điểm tốt nhất từng đạt được
+      const bestScore = Math.max(currentScore, maxScore);
+
       result[row.node_id] = {
-        status: mapScoreToStatus(bestScore), // Tính trạng thái dựa trên điểm cao nhất
-        score: row.score,
-        max_score: row.max_score, // Trả về max_score cho UI
+        status: mapScoreToStatus(bestScore),
+        score: bestScore,
+        max_score: maxScore,
         passed: bestScore >= 80,
       };
     });
 
     return result;
-  } catch (err) {
-    console.error('getNodeProgress error:', err);
-    throw err;
+  } catch (err: any) {
+    // Không throw nữa để Mindmap không bị lỗi
+    console.warn(
+      "[nodeProgressApi] getNodeProgress unexpected error:",
+      err?.message ?? err
+    );
+    return {};
   }
 }
