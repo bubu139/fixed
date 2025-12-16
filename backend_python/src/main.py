@@ -22,8 +22,8 @@ from src.ai_schemas.chat_schema import ChatInputSchema
 from src.services import rag_service
 from src.routes import student_profile
 
+app = FastAPI(title="Math Tutor API")
 
-app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
@@ -361,15 +361,7 @@ SUMMARIZE_SYSTEM_INSTRUCTION = """Bạn là một giảng viên toán học chuy
 
 # ===== FASTAPI APP =====
 
-app = FastAPI(title="Math Tutor API")
-app.include_router(node_progress_router)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
 def extract_reply_only(raw_text: str) -> str:
     """
     Lấy phần nội dung trong key "reply": " ... " từ output của model,
