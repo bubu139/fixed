@@ -20,6 +20,7 @@ from src.ai_config import genai
 from src.ai_flows.chat_flow import chat as chat_flow
 from src.ai_schemas.chat_schema import ChatInputSchema
 from src.services import rag_service
+from src.routes import student_profile
 
 
 app = FastAPI()
@@ -34,6 +35,7 @@ app.add_middleware(
 
 # Thêm router node progress
 app.include_router(node_progress_router)
+app.include_router(student_profile.router)
 
 # ===== DOCUMENT PROCESSING =====
 
