@@ -6,8 +6,11 @@ import { NodeDetailDialog } from "@/components/mind-map/node-detail-dialog";
 import { mindMapData } from "@/lib/mindmap-data";
 import type { MindMapNode } from "@/types/mindmap";
 
-import { getNodeProgress, openNode } from "@/lib/nodeProgressApi";
-import type { NodeProgress, NodeStatus } from "@/lib/nodeProgressApi";
+// Import hàm xử lý storage để lấy kiến thức mới từ Chat
+import { loadStoredMindmapInsights, mergeMindmapWithInsights } from "@/lib/mindmap-storage";
+
+import { getNodeProgress } from "@/lib/nodeProgressApi";
+import type { NodeProgress } from "@/lib/nodeProgressApi";
 
 import { useUser } from "@/supabase/auth/use-user";
 import { Button } from "@/components/ui/button";
@@ -25,7 +28,6 @@ import {
   ListTree,
   ArrowLeft,
   CheckCircle2,
-  Circle,
   ChevronRight,
   ChevronDown,
   BookOpen,
@@ -33,13 +35,21 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// --- 1. ĐỊNH NGHĨA INTERFACE QUAN TRỌNG ---
 interface LearningPathItemProps {
   node: MindMapNode;
   level: number;
   progress: Record<string, NodeProgress>;
   onNodeClick: (node: MindMapNode) => void;
 }
+const DEMO_EMAIL = "hgtgd1903@gmail.com";
+const DEMO_COMPLETED_CHAPTERS: Record<string, number> = {
+  "khao-sat-ham-so": 3,
+  "nguyen-ham-tich-phan": 1,
+};
+const DEMO_CHAPTERS = ["khao-sat-ham-so", "nguyen-ham-tich-phan"];
 
+// --- 2. COMPONENT ĐỆ QUY HIỂN THỊ CÂY THƯ MỤC ---
 const LearningPathItem = ({
   node,
   level,
@@ -47,9 +57,10 @@ const LearningPathItem = ({
   onNodeClick,
 }: LearningPathItemProps) => {
   const [isOpen, setIsOpen] = useState(false);
+  
+  // Kiểm tra an toàn xem node có con không
   const hasChildren = node.children && node.children.length > 0;
   
-  // ✅ LOGIC MỚI: Chỉ có 2 trạng thái - Vàng và Xanh Lá
   const nodeProg = progress[node.id];
   const bestScore = nodeProg?.max_score ?? nodeProg?.score ?? 0;
   
@@ -114,12 +125,17 @@ const LearningPathItem = ({
             <BookOpen className="w-4 h-4 text-blue-500" />
         </Button>
       </div>
+      
+      {/* Render các node con nếu đang mở */}
       {isOpen && hasChildren && (
         <div className="border-l border-dashed border-gray-200 ml-5 pl-1 animate-in slide-in-from-top-2 duration-200">
-          {node.children.map((child) => (
+          {node.children?.map((child: MindMapNode) => (
             <LearningPathItem 
-              key={child.id} node={child} level={level + 1} 
-              progress={progress} onNodeClick={onNodeClick}
+              key={child.id} 
+              node={child} 
+              level={level + 1} 
+              progress={progress} 
+              onNodeClick={onNodeClick}
             />
           ))}
         </div>
@@ -128,15 +144,33 @@ const LearningPathItem = ({
   );
 };
 
+// --- 3. TRANG CHÍNH ---
 export default function MindmapPage() {
   const { user } = useUser();
   const userId = user?.id || "";
-
+const isDemoUser = user?.email === DEMO_EMAIL;
   const [viewMode, setViewMode] = useState<'mindmap' | 'path'>('mindmap');
   const [selectedChapter, setSelectedChapter] = useState<MindMapNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<MindMapNode | null>(null);
   const [progress, setProgress] = useState<Record<string, NodeProgress>>({});
   const [loading, setLoading] = useState(true);
+
+  // State lưu cây dữ liệu đã được merge với insights mới
+  const [treeData, setTreeData] = useState<MindMapNode>(mindMapData);
+
+  // Effect tải insights từ localStorage và merge vào cây
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+        const storedInsights = loadStoredMindmapInsights();
+        if (storedInsights && storedInsights.length > 0) {
+          console.log("Found stored insights, merging...", storedInsights);
+          const merged = mergeMindmapWithInsights(mindMapData, storedInsights);
+          setTreeData(merged);
+        } else {
+          setTreeData(mindMapData);
+        }
+    }
+  }, []);
 
   useEffect(() => {
     if (!userId) return;
@@ -153,13 +187,12 @@ export default function MindmapPage() {
     load();
   }, [userId]);
 
-  // ✅ LOGIC MỚI: Không cần gọi openNode nữa vì tất cả đã mặc định Vàng
   async function handleNodeClick(node: MindMapNode) {
     setSelectedNode(node);
-    // Không cần làm gì thêm, chỉ mở dialog
   }
 
-  const subjects = useMemo(() => mindMapData.children || [], []);
+  // Dùng treeData thay vì mindMapData gốc để có các node mới
+  const subjects = useMemo(() => treeData.children || [], [treeData]);
 
   if (loading) return (
     <div className="w-full h-full flex items-center justify-center bg-slate-50">
@@ -212,14 +245,14 @@ export default function MindmapPage() {
           </div>
           <ScrollArea className="flex-1 pr-4 -mr-4">
              <div className="pb-24 pl-1">
-                {subjects.map(subject => (
+                {subjects.map((subject: MindMapNode) => (
                   <div key={subject.id} className="mb-8">
                     <h2 className="text-xl font-bold text-slate-700 mb-4 flex items-center gap-2">
                       <span className="w-1.5 h-6 bg-blue-500 rounded-full inline-block"></span>
                       {subject.label}
                     </h2>
                     <div className="space-y-1">
-                        {subject.children.map(chapter => (
+                        {subject.children?.map((chapter: MindMapNode) => (
                         <LearningPathItem 
                             key={chapter.id} node={chapter} level={0}
                             progress={progress} onNodeClick={handleNodeClick}
@@ -244,21 +277,32 @@ export default function MindmapPage() {
                         </div>
                         <Tabs defaultValue={subjects[0]?.id} className="w-full">
                             <TabsList className="grid w-full max-w-md mx-auto grid-cols-2 mb-8 h-12 p-1 bg-slate-200/50">
-                                {subjects.map(sub => (
+                                {subjects.map((sub: MindMapNode) => (
                                     <TabsTrigger key={sub.id} value={sub.id} className="h-full text-base">{sub.label}</TabsTrigger>
                                 ))}
                             </TabsList>
-                            {subjects.map(subject => (
+                            {subjects.map((subject: MindMapNode) => (
                                 <TabsContent key={subject.id} value={subject.id}>
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                        {subject.children.map(chapter => {
+                                        {subject.children?.map((chapter: MindMapNode) => {
                                             const totalNodes = chapter.children?.length || 0;
-                                            // ✅ Đếm node Xanh Lá (≥ 80 điểm)
-                                            const completedNodes = chapter.children?.filter(c => {
-                                              const p = progress[c.id];
-                                              const score = p?.max_score ?? p?.score ?? 0;
-                                              return score >= 80;
-                                            }).length || 0;
+// kiểm tra chapter có phải là chapter demo không
+const isDemoChapter = DEMO_CHAPTERS.includes(chapter.id);
+
+// số hoàn thành thực tế từ progress
+const realCompleted = chapter.children?.filter((c: MindMapNode) => {
+  const p = progress[c.id];
+  const score = p?.max_score ?? p?.score ?? 0;
+  return score >= 80;
+}).length ?? 0;
+
+// hiển thị số hoàn thành: nếu là user demo và chapter demo → hiển thị số demo
+const displayCompleted = isDemoChapter && isDemoUser
+  ? DEMO_COMPLETED_CHAPTERS[chapter.id]   // chỉ user demo thấy 3/7 hoặc 1/3
+  : realCompleted;
+
+
+
                                             
                                             return (
                                                 <Card key={chapter.id} className="cursor-pointer hover:shadow-lg transition-all group border-slate-200 hover:border-blue-400" onClick={() => setSelectedChapter(chapter)}>
@@ -269,7 +313,8 @@ export default function MindmapPage() {
                                                     <CardContent>
                                                         <div className="flex items-center justify-between text-sm text-slate-500 bg-slate-50 p-2 rounded-md">
                                                             <div className="flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 text-green-500" /><span>Hoàn thành:</span></div>
-                                                            <span className="font-semibold text-slate-700">{completedNodes} / {totalNodes}</span>
+                                                            <span className="font-semibold text-slate-700">{displayCompleted} / {totalNodes}</span>
+
                                                         </div>
                                                     </CardContent>
                                                 </Card>
