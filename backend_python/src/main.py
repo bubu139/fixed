@@ -3,6 +3,7 @@ import re
 import uvicorn
 import json
 import os
+import hashlib 
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from src.routes.node_progress import router as node_progress_router
@@ -19,7 +20,6 @@ from src.ai_config import genai
 from src.ai_flows.chat_flow import chat as chat_flow
 from src.ai_schemas.chat_schema import ChatInputSchema
 from src.services import rag_service
-from src.routes import student_profile
 
 
 app = FastAPI()
@@ -34,7 +34,6 @@ app.add_middleware(
 
 # Thêm router node progress
 app.include_router(node_progress_router)
-app.include_router(student_profile.router)
 
 # ===== DOCUMENT PROCESSING =====
 
@@ -105,15 +104,21 @@ def load_reference_materials(folder_path: str, max_files: int = 5) -> str:
 
 # ===== PATHS CONFIGURATION =====
 
+# ===== PATHS CONFIGURATION =====
+
 BASE_DIR = Path(__file__).parent.parent
 EXERCISES_FOLDER = BASE_DIR / "reference_materials" / "exercises"
 TESTS_FOLDER = BASE_DIR / "reference_materials" / "tests"
+GENERATED_TESTS_FOLDER = BASE_DIR / "generated_tests"  # ✅ thư mục cache đề thi
 
-EXERCISES_FOLDER.mkdir(parents=True, exist_ok=True)
-TESTS_FOLDER.mkdir(parents=True, exist_ok=True)
+# Tạo thư mục nếu chưa có
+for folder in [EXERCISES_FOLDER, TESTS_FOLDER, GENERATED_TESTS_FOLDER]:
+    folder.mkdir(parents=True, exist_ok=True)
 
 print(f"📁 Exercises folder: {EXERCISES_FOLDER}")
 print(f"📁 Tests folder: {TESTS_FOLDER}")
+print(f"📁 Generated tests folder: {GENERATED_TESTS_FOLDER}")
+
 
 # ===== SYSTEM INSTRUCTIONS =====
 
@@ -356,7 +361,6 @@ SUMMARIZE_SYSTEM_INSTRUCTION = """Bạn là một giảng viên toán học chuy
 
 app = FastAPI(title="Math Tutor API")
 app.include_router(node_progress_router)
-app.include_router(student_profile.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -463,8 +467,28 @@ class GenerateTestInput(BaseModel):
     userId: Optional[str] = None
     topic: str
     difficulty: str = "medium"
-    testType: str = "standard"  # Thêm trường này (node, standard, thptqg)
-    numQuestions: int = 5       # Thêm trường này
+    testType: str = "standard"  # (node, standard, thptqg)
+    numQuestions: int = 5       # số câu hỏi
+
+
+def get_test_cache_path(req: GenerateTestInput) -> Path:
+    """
+    Tạo đường dẫn file cache dựa trên nội dung request.
+    Hai request giống hệt nhau (userId/topic/difficulty/testType/numQuestions)
+    sẽ dùng chung một file cache.
+    """
+    key_data = {
+        "userId": req.userId,
+        "topic": req.topic,
+        "difficulty": req.difficulty,
+        "testType": req.testType,
+        "numQuestions": req.numQuestions,
+    }
+    key_str = json.dumps(key_data, ensure_ascii=False, sort_keys=True)
+    key_hash = hashlib.sha256(key_str.encode("utf-8")).hexdigest()[:16]
+    return GENERATED_TESTS_FOLDER / f"test_{key_hash}.json"
+
+
 # ===== HELPER FUNCTIONS =====
 
 def evaluate_node_status(score: float, has_opened: bool) -> str:
@@ -992,6 +1016,17 @@ def escape_backslashes(obj):
 async def handle_generate_test(request: GenerateTestInput):
     """Generate a test based on PDF/Word reference materials"""
     try:
+        # 1️⃣ Kiểm tra cache trước: nếu đã có file thì trả luôn, không gọi Gemini nữa
+        cache_path = get_test_cache_path(request)
+        if cache_path.exists():
+            try:
+                with cache_path.open("r", encoding="utf-8") as f:
+                    cached_data = json.load(f)
+                print(f"✅ Trả đề thi từ cache: {cache_path.name}")
+                return cached_data
+            except Exception as e:
+                print(f"⚠️ Lỗi đọc cache {cache_path}: {e}. Sẽ tạo đề mới.")
+
         print(f"📝 Loading test reference materials for topic: {request.topic}")
         reference_text = load_reference_materials(str(TESTS_FOLDER), max_files=3)
 
@@ -1015,14 +1050,14 @@ async def handle_generate_test(request: GenerateTestInput):
                 for d in docs:
                     context_text += f"- {d['content']}\n"
 
-        # --- PROMPT GIỮ NGUYÊN --- 
+        # ⚠️ Prompt dùng đúng y như bạn gửi
         prompt = f"""Tạo đề kiểm tra TOÁN LỚP 12 về chủ đề: "{request.topic}" Độ khó: {request.difficulty} TÀI LIỆU THAM KHẢO: {context_text} {reference_text if reference_text else "Không có tài liệu. Tạo đề theo chuẩn THPT QG."} QUY TẮC QUAN TRỌNG (CHUẨN FORM THPT 2025): 1. Mỗi câu hỏi PHẢI có đầy đủ dữ liệu (phương trình, hàm số, đồ thị...) 2. Sử dụng LaTeX cho công thức: $x^2$ hoặc $x^2 + 2x + 1 = 0$ 3. Câu hỏi phải CỤ THỂ, KHÔNG mơ hồ 4. Đáp án phải CHÍNH XÁC 5. Cấu trúc đề: - Phần 1: Trắc nghiệm 4 lựa chọn (A,B,C,D) - Phần 2: Trắc nghiệm Đúng/Sai (4 ý a,b,c,d) - Phần 3: Trả lời ngắn (Điền số) VÍ DỤ MẪU: TRẮC NGHIỆM TỐT: "Câu 1: Phương trình $x^2 - 5x + 6 = 0$ có bao nhiêu nghiệm?" TRẮC NGHIỆM SAI (THIẾU DỮ LIỆU): "Câu 1: Phương trình có bao nhiêu nghiệm?" ❌ ĐÚNG/SAI TỐT: "Câu 5: Cho hàm số $y = x^3 - 3x + 1$. Xét tính đúng/sai của các mệnh đề sau: a) Hàm số đồng biến trên khoảng $(1; +\\infty)$ b) Đồ thị hàm số cắt trục hoành tại 3 điểm c) Hàm số có cực đại tại $x = -1$ d) $\\lim_{{x \\to +\\infty}} y = +\\infty$" QUAN TRỌNG - PHẦN ĐÚNG/SAI: Câu hỏi đúng/sai PHẢI có cấu trúc: - prompt: "Câu X: Cho [dữ liệu cụ thể]. Xét tính đúng/sai của các mệnh đề sau:" - statements: Mảng 4 mệnh đề CỤ THỂ, có thể đánh giá được VÍ DỤ MẪU ĐÚNG: {{ "id": "tf1", "type": "true-false", "prompt": "Câu 5: Cho hàm số $y = x^3 - 3x + 1$. Xét tính đúng/sai:", "statements": [ "Hàm số đồng biến trên khoảng $(1; +\\infty)$", "Đồ thị hàm số cắt trục hoành tại 3 điểm", "Hàm số có cực đại tại $x = -1$", "Giới hạn $\\lim_{{x \\to +\\infty}} y = +\\infty$" ], "answer": [true, true, true, true] }} VÍ DỤ SAI (KHÔNG LÀM THẾ NÀY): {{ "statements": ["a) Đúng", "b) Sai", "c) Đúng", "d) Sai"] ❌ }} ***QUAN TRỌNG VỀ JSON (BẮT BUỘC):*** Toàn bộ đầu ra là một chuỗi JSON. Do đó, tất cả các ký tự gạch chéo ngược (\\) BÊN TRONG chuỗi (ví dụ: trong LaTeX) PHẢI được thoát (escaped) bằng cách nhân đôi. VÍ DỤ: - SAI: "$\\frac{{1}}{{2}}$" - ĐÚNG: "$\\\\frac{{1}}{{2}}$" - SAI: "$\\lim_{{x \\to 0}}$" - ĐÚNG: "$\\\\lim_{{x \\\\to 0}}$" - SAI: "$(1; +\\infty)$" - ĐÚNG: "$(1; +\\\\infty)$" YÊU CẦU: Trả về JSON thuần túy, KHÔNG markdown code block: Trả về JSON: {{ "title": "KIỂM TRA {request.topic.upper()}", "parts": {{ "multipleChoice": {{ ... }}, "trueFalse": {{ "title": "PHẦN 2: ĐÚNG/SAI", "questions": [ {{ "id": "tf1", "type": "true-false", "prompt": "Câu 5: Cho hàm số $y = 2x^2 - 4x + 1$. Xét tính đúng/sai của các mệnh đề sau:", "statements": [ "Đồ thị hàm số có trục đối xứng $x = 1$", "Hàm số có giá trị nhỏ nhất bằng $-1$", "Đồ thị hàm số đi qua điểm $(0, 1)$", "Hàm số nghịch biến trên khoảng $(-\\\\infty; 1)$" ], "answer": [true, true, true, true] }} ] }}, "shortAnswer": {{ ... }} }} }} KHÔNG dùng a), b), c), d) trong statements! Mỗi statement là một mệnh đề hoàn chỉnh! LƯU Ý BẮT BUỘC: - KHÔNG dùng markdown
 json ...
 - Mỗi câu hỏi PHẢI có đầy đủ dữ liệu cụ thể - LaTeX dùng $ cho inline, $ cho display - TẤT CẢ DẤU \\ TRONG LATEX PHẢI ĐƯỢC ESCAPE (ví dụ: \\\\frac, \\\\lim, \\\\infty) - answer trong multipleChoice: 0=option[0], 1=option[1], 2=option[2], 3=option[3] - answer trong trueFalse: [true, false, true, false] - answer trong shortAnswer: string số (max 6 ký tự)"""
 
         response = model.generate_content(prompt)
 
-        # --- Parse JSON an toàn ---
+        # --- Parse JSON an toàn (giữ logic cũ của bạn) ---
         try:
             json_text = clean_json_response(response.text)
             if not json_text:
@@ -1032,12 +1067,10 @@ json ...
             if not json_text:
                 raise ValueError("Không tìm thấy JSON hợp lệ")
 
-            # ✨ Sửa ở đây: escape \ trước khi json.loads
+            # ✨ giữ hack cũ: escape \ trước khi json.loads
             safe_json_text = json_text.replace("\\", "\\\\")  # tất cả \ → \\
 
             result = json.loads(safe_json_text)
-
-
 
         except json.JSONDecodeError as e:
             print(f"❌ JSON parse error: {e}")
@@ -1049,14 +1082,28 @@ json ...
 
         # Validate structure
         if "parts" not in result or "multipleChoice" not in result["parts"]:
-            raise HTTPException(status_code=500, detail="Dữ liệu đề thi thiếu cấu trúc 'parts' hoặc 'multipleChoice'")
+            raise HTTPException(
+                status_code=500,
+                detail="Dữ liệu đề thi thiếu cấu trúc 'parts' hoặc 'multipleChoice'"
+            )
 
-        return {
+        # Đóng gói response chuẩn
+        response_data = {
             "topic": request.topic,
             "difficulty": request.difficulty,
             "has_reference": bool(reference_text),
-            "test": result
+            "test": result,
         }
+
+        # 2️⃣ Lưu cache để lần sau gọi lại không tốn quota
+        try:
+            with cache_path.open("w", encoding="utf-8") as f:
+                json.dump(response_data, f, ensure_ascii=False, indent=2)
+            print(f"💾 Đã lưu cache đề thi: {cache_path.name}")
+        except Exception as e:
+            print(f"⚠️ Không thể lưu cache đề thi: {e}")
+
+        return response_data
 
     except HTTPException:
         raise
@@ -1073,6 +1120,7 @@ json ...
             )
 
         raise HTTPException(status_code=500, detail=str(e))
+
 
 
 @app.post("/api/summarize-topic")
@@ -1363,6 +1411,7 @@ if __name__ == "__main__":
     print("="*60)
     print(f"📁 Exercises folder: {EXERCISES_FOLDER}")
     print(f"📁 Tests folder: {TESTS_FOLDER}")
+    # 📁 Thư mục lưu cache đề thi đã sinh
     print("\n📄 Supported formats: PDF (.pdf), Word (.docx, .doc)")
     print("⚠️  NOTE: Place your files in these folders")
     print("="*60 + "\n")
