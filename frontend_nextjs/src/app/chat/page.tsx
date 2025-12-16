@@ -1,5 +1,4 @@
 'use client';
-
 import { useState, useRef, useEffect, FormEvent } from 'react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
@@ -18,7 +17,6 @@ import Link from 'next/link';
 import { MindmapInsightPayload, upsertMindmapInsights } from '@/lib/mindmap-storage';
 // 🔥 UPDATE: Import Modal Camera mới
 import { CameraCaptureDialog } from '@/components/chat/CameraCaptureDialog';
-import { useUser } from '@/supabase/auth/use-user';
 
 // --- CÁC TYPE VÀ INTERFACE (GIỮ NGUYÊN) ---
 type Message = {
@@ -81,14 +79,14 @@ const updateNodeScore = async (nodeId: string, score: number) => {
 
 // --- DANH SÁCH CÔNG CỤ "SMART" (GIỮ NGUYÊN) ---
 const SMART_TOOLS = [
-  { label: 'x²', latex: 'x^2' },
-  { label: 'aⁿ', latex: '#?^{#?}' },
-  { label: '√',  latex: '\\sqrt{#?}' },
-  { label: '√n', latex: '\\sqrt[#?]{#?}' },
-  { label: '÷',  latex: '\\frac{#?}{#?}' },
-  { label: '∫',  latex: '\\int_{#?}^{#?}' },
-  { label: 'Σ',  latex: '\\sum_{#?}^{#?}' },
-  { label: '( )', latex: '\\left(#?\\right)' },
+  { label: 'x²', latex: 'x^2' },                  
+  { label: 'aⁿ', latex: '#?^{#?}' },              
+  { label: '√',  latex: '\\sqrt{#?}' },           
+  { label: '√n', latex: '\\sqrt[#?]{#?}' },       
+  { label: '÷',  latex: '\\frac{#?}{#?}' },       
+  { label: '∫',  latex: '\\int_{#?}^{#?}' },      
+  { label: 'Σ',  latex: '\\sum_{#?}^{#?}' },      
+  { label: '( )', latex: '\\left(#?\\right)' },   
 ];
 
 // --- DANH SÁCH KÝ TỰ CHO POPOVER (GIỮ NGUYÊN) ---
@@ -138,22 +136,12 @@ const latexSymbols = [
 ];
 
 export default function ChatPage() {
-  const { user } = useUser();
-
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
+  const [input, setInput] = useState(''); 
   const [isLoading, setIsLoading] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const [mindmapUpdates, setMindmapUpdates] = useState<MindmapInsightPayload[]>([]);
   const [geogebraSuggestion, setGeogebraSuggestion] = useState<GeogebraSuggestion | null>(null);
-  const [guidedMode, setGuidedMode] = useState(true);
-  const [micMode, setMicMode] = useState(false);
-  const [isListening, setIsListening] = useState(false);
-  const [speechError, setSpeechError] = useState<string | null>(null);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -162,8 +150,7 @@ export default function ChatPage() {
   const endRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const inputContainerRef = useRef<HTMLDivElement>(null);
-  const mathFieldRef = useRef<MathfieldElement>(null);
-  const recognitionRef = useRef<any>(null);
+  const mathFieldRef = useRef<MathfieldElement>(null); 
 
   useEffect(() => {
     setMessages([{
@@ -172,29 +159,22 @@ export default function ChatPage() {
     }]);
   }, []);
 
-  useEffect(() => {
-    if (!micMode) {
-      stopListening();
-    }
-  }, [micMode]);
-
   const handleInsertSymbol = (latex: string) => {
     const mf = mathFieldRef.current;
     if (mf) {
-      mf.executeCommand(['insert', latex, {
-        focus: true,
+      mf.executeCommand(['insert', latex, { 
+        focus: true, 
         feedback: true,
         mode: 'math'
       }]);
     }
   };
 
-  const handleSend = async (e?: FormEvent, messageOverride?: string) => {
+  const handleSend = async (e?: FormEvent) => {
     if (e) e.preventDefault();
-    const payloadInput = (messageOverride ?? input).trim();
-    if (!payloadInput && attachedFiles.length === 0) return;
+    if (!input.trim() && attachedFiles.length === 0) return;
 
-    const normalizedInput = payloadInput;
+    const normalizedInput = input.trim();
     const userVisibleText = normalizedInput || '📎 Đã gửi file đính kèm';
     const userMessage: Message = { text: userVisibleText, isUser: true, files: attachedFiles };
 
@@ -220,15 +200,10 @@ export default function ChatPage() {
     try {
       const media = currentFiles.map(file => ({ url: file.content }));
 
-      const endpoint = guidedMode ? `${API_BASE_URL}/api/learning/guided-solve` : `${API_BASE_URL}/api/chat`;
-      const payload = guidedMode
-        ? { userId: user?.id ?? null, message: apiMessage, history: historyPayload, studentAnswer: normalizedInput || undefined, requireGeoGebra: true }
-        : { userId: user?.id ?? null, message: apiMessage, media, history: historyPayload };
-
-      const response = await fetch(endpoint, {
+      const response = await fetch(`${API_BASE_URL}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ message: apiMessage, media, history: historyPayload }),
       });
 
       if (!response.ok) {
@@ -240,81 +215,55 @@ export default function ChatPage() {
         throw new Error(errorText);
       }
 
-      const result = await response.json();
-      if (guidedMode) {
-        const steps: string[] = result.steps || [];
-        const recap: string[] = result.recapKnowledge || [];
-        const guidedText = [
-          'Chế độ mic/hướng dẫn từng bước:',
-          steps.map((s: string, idx: number) => `${idx + 1}. ${s}`).join('\n'),
-          '',
-          'Kiến thức cần nhắc:',
-          recap.map((s: string) => `- ${s}`).join('\n')
-        ].join('\n');
-        setMessages(prev => [...prev, { text: guidedText, isUser: false }]);
+      const result: ChatApiResponse = await response.json();
+      const assistantMessage: Message = {
+        text: result.reply || 'Lỗi phản hồi.',
+        isUser: false
+      };
 
-        const geoBlock = result.geogebra;
-        if (geoBlock?.should_draw && geoBlock.commands && geoBlock.commands.length > 0) {
-          setGeogebraSuggestion({
-            prompt: geoBlock.prompt || apiMessage,
-            reason: geoBlock.reason || 'Vẽ hình để trực quan hơn.',
-            commands: geoBlock.commands,
-            consumed: false,
+      setMessages(prev => [...prev, assistantMessage]);
+
+      // 🔥 BLOCK MINDMAP ĐÃ SỬA
+      if (Array.isArray(result.mindmap_insights) && result.mindmap_insights.length > 0) {
+        const normalized: MindmapInsightPayload[] = result.mindmap_insights
+          .filter((node): node is ApiMindmapInsight => Boolean(node && node.node_id && node.label))
+          .map((node) => ({
+            nodeId: node.node_id,
+            parentNodeId: node.parent_node_id ?? null,
+            label: node.label,
+            type: node.type,
+            weaknessSummary: node.weakness_summary,
+            actionSteps: node.action_steps,
+            color: node.color,
+          }));
+
+        if (normalized.length > 0) {
+          setMindmapUpdates(normalized);
+
+          try {
+            await upsertMindmapInsights(normalized);
+          } catch (err) {
+            console.error('Lỗi lưu mindmap:', err);
+          }
+
+          normalized.forEach((node) => {
+            updateNodeScore(node.nodeId, 100);
           });
-        } else {
-          setGeogebraSuggestion(null);
         }
       } else {
-        const typedResult: ChatApiResponse = result;
-        const assistantMessage: Message = {
-          text: typedResult.reply || 'Lỗi phản hồi.',
-          isUser: false
-        };
+        setMindmapUpdates([]);
+      }
 
-        setMessages(prev => [...prev, assistantMessage]);
-
-        // 🔥 BLOCK MINDMAP ĐÃ SỬA
-        if (Array.isArray(typedResult.mindmap_insights) && typedResult.mindmap_insights.length > 0) {
-          const normalized: MindmapInsightPayload[] = typedResult.mindmap_insights
-            .filter((node): node is ApiMindmapInsight => Boolean(node && node.node_id && node.label))
-            .map((node) => ({
-              nodeId: node.node_id,
-              parentNodeId: node.parent_node_id ?? null,
-              label: node.label,
-              type: node.type,
-              weaknessSummary: node.weakness_summary,
-              actionSteps: node.action_steps,
-              color: node.color,
-            }));
-
-          if (normalized.length > 0) {
-            setMindmapUpdates(normalized);
-
-            try {
-              await upsertMindmapInsights(normalized);
-            } catch (err) {
-              console.error('Lỗi lưu mindmap:', err);
-            }
-
-            normalized.forEach((node) => {
-              updateNodeScore(node.nodeId, 100);
-            });
-          }
-        } else {
-          setMindmapUpdates([]);
-        }
-
-        const geoBlock = typedResult.geogebra;
-        if (geoBlock?.should_draw && geoBlock.commands && geoBlock.commands.length > 0) {
-          setGeogebraSuggestion({
-            prompt: geoBlock.prompt || apiMessage,
-            reason: geoBlock.reason || 'Vẽ hình để trực quan hơn.',
-            commands: geoBlock.commands,
-            consumed: false,
-          });
-        } else {
-          setGeogebraSuggestion(null);
-        }
+      const geoBlock = result.geogebra;
+      if (geoBlock?.should_draw && geoBlock.commands && geoBlock.commands.length > 0) {
+        setGeogebraSuggestion({
+          prompt: geoBlock.prompt || apiMessage,
+          reason: geoBlock.reason || 'Vẽ hình để trực quan hơn.',
+          commands: geoBlock.commands,
+          consumed: false,
+        });
+      } else {
+        setGeogebraSuggestion(null);
       }
     } catch (error: any) {
       console.error('Lỗi Chat:', error);
@@ -360,83 +309,6 @@ export default function ChatPage() {
       setAttachedFiles(prev => [...prev, newFile]);
     };
     reader.readAsDataURL(file);
-  };
-
-  const stopListening = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-    }
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
-      mediaStreamRef.current = null;
-    }
-    setIsListening(false);
-  };
-
-  const startListening = () => {
-    if (typeof window === 'undefined') return;
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setSpeechError('Trình duyệt chưa hỗ trợ ghi âm.');
-      return;
-    }
-
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-      mediaStreamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
-      audioChunksRef.current = [];
-
-      recorder.ondataavailable = (event) => {
-        if (event.data && event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      recorder.onstop = async () => {
-        if (!audioChunksRef.current.length) {
-          setSpeechError('Không thu được âm thanh, vui lòng thử lại.');
-          setIsListening(false);
-          return;
-        }
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'voice.webm');
-        try {
-          setIsTranscribing(true);
-          const res = await fetch(`${API_BASE_URL}/api/stt`, { method: 'POST', body: formData });
-          if (!res.ok) throw new Error('Không gửi được file âm thanh');
-          const data = await res.json();
-          const transcript = (data?.text || '').trim();
-          if (transcript) {
-            setInput(transcript);
-            await handleSend(undefined, transcript);
-          } else {
-            setSpeechError('Không nhận diện được nội dung.');
-          }
-        } catch (err: any) {
-          console.error('Transcription error', err);
-          setSpeechError(err.message || 'Không thể chuyển giọng nói thành văn bản.');
-        } finally {
-          setIsTranscribing(false);
-        }
-      };
-
-      recorder.onerror = (event: any) => {
-        console.error('Recorder error', event);
-        setSpeechError('Không thể ghi âm.');
-        setIsListening(false);
-      };
-
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setSpeechError(null);
-      setIsListening(true);
-    }).catch((err) => {
-      console.error('getUserMedia error', err);
-      setSpeechError('Không thể truy cập micro.');
-    });
   };
 
   const removeFile = (index: number) => {
@@ -521,7 +393,7 @@ export default function ChatPage() {
                     {message.text}
                   </ReactMarkdown>
                 </div>
-
+                
                 {message.files && message.files.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-2">
                     {message.files.map((file, i) => (
@@ -558,7 +430,7 @@ export default function ChatPage() {
               </div>
             </div>
           )}
-
+          
           {geogebraSuggestion && (
             <Card className="border-blue-200 bg-white/90 shadow-md">
               <CardHeader className="flex flex-row items-center justify-between py-3">
@@ -582,14 +454,14 @@ export default function ChatPage() {
               </CardContent>
             </Card>
           )}
-
+          
           <div ref={endRef} />
         </div>
       </div>
 
       {/* INPUT AREA */}
       <div ref={inputContainerRef} className="fixed bottom-0 left-0 right-0 p-3 sm:px-4 sm:py-4 bg-white border-t border-blue-100 z-10 shadow-[0_-5px_15px_rgba(0,0,0,0.05)]">
-
+        
         {/* FILES PREVIEW */}
         {attachedFiles.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2">
@@ -601,9 +473,6 @@ export default function ChatPage() {
               </div>
             ))}
           </div>
-        )}
-        {speechError && (
-          <p className="text-xs text-red-500 mb-1">{speechError}</p>
         )}
 
         {/* MAIN INPUT ROW */}
@@ -633,31 +502,6 @@ export default function ChatPage() {
             <Camera className="w-5 h-5" />
           </Button>
 
-          <Button
-            type="button"
-            variant={micMode ? "default" : "ghost"}
-            className="flex-shrink-0 h-10 rounded-xl px-3"
-            onClick={() => {
-              const next = !micMode;
-              setMicMode(next);
-              if (next) startListening(); else stopListening();
-            }}
-            disabled={isLoading}
-          >
-            {isTranscribing ? '⏳ Đang chuyển...' : isListening ? '🎙️ Đang nghe' : '🎤 Mic'}
-          </Button>
-
-          <Button
-            type="button"
-            variant={guidedMode ? "secondary" : "ghost"}
-            className="flex-shrink-0 h-10 rounded-xl px-3"
-            onClick={() => setGuidedMode((prev) => !prev)}
-            disabled={isLoading}
-            title="Bật chế độ AI hướng dẫn từng bước"
-          >
-            🧭 Hướng dẫn
-          </Button>
-
           {/* SIGMA POPOVER */}
           <Popover>
             <PopoverTrigger asChild>
@@ -675,7 +519,7 @@ export default function ChatPage() {
                         <Button
                           key={symbol.display} variant="ghost" size="sm"
                           className="h-8 text-lg font-serif"
-                          onClick={() => handleInsertSymbol(symbol.insert)}
+                          onClick={() => handleInsertSymbol(symbol.insert)} 
                         >
                           {symbol.display}
                         </Button>
@@ -709,7 +553,7 @@ export default function ChatPage() {
             <Send className="w-5 h-5" />
           </Button>
         </div>
-
+        
         <p className="text-[10px] text-gray-400 mt-2 text-center">
           Shift + Enter xuống dòng • Hỗ trợ LaTeX
         </p>
@@ -729,8 +573,8 @@ export default function ChatPage() {
       />
 
       {/* Modal Camera */}
-      <CameraCaptureDialog
-        open={isCameraOpen}
+      <CameraCaptureDialog 
+        open={isCameraOpen} 
         onOpenChange={setIsCameraOpen}
         onCapture={handleCameraCapture}
       />

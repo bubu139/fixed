@@ -65,6 +65,54 @@ import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { API_BASE_URL } from '@/lib/utils';
 
+
+const STUDENT_PROFILE_TIMEOUT_MS = 12000;
+
+function buildStudentProfileUrl(userId: string) {
+  const base = API_BASE_URL.replace(/\/$/, '');
+  // Thực tế dự án hay cấu hình API_BASE_URL = ".../api".
+  // Trong khi router student_profile hiện đang mount ở root ("/student-profile").
+  // Vì vậy: nếu base kết thúc bằng "/api" thì bỏ "/api" đi để tránh 404.
+  const normalizedBase = base.endsWith('/api') ? base.slice(0, -4) : base;
+  return `${normalizedBase}/student-profile/${userId}`;
+}
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  timeoutMs: number = STUDENT_PROFILE_TIMEOUT_MS,
+) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readResponseError(res: Response): Promise<string> {
+  let raw = '';
+  try {
+    raw = await res.text();
+  } catch {
+    raw = '';
+  }
+
+  if (!raw) return `HTTP ${res.status}`;
+
+  try {
+    const parsed = JSON.parse(raw);
+    const detail = parsed?.detail ?? parsed?.message;
+    if (detail) return `HTTP ${res.status}: ${String(detail)}`;
+  } catch {
+    // ignore JSON parse
+  }
+
+  return `HTTP ${res.status}: ${raw}`;
+}
+
 const masteryConfig: ChartConfig = {
   advanced: { label: 'Nắm vững', color: 'hsl(var(--primary))' },
   practicing: { label: 'Đang luyện', color: '#f97316' },
@@ -192,8 +240,12 @@ export default function UserPage() {
     (async () => {
       setProfileError(null);
       try {
-        const res = await fetch(`${API_BASE_URL}/student-profile/${user.id}`, { method: 'GET' });
-        if (!res.ok) return;
+        const profileUrl = buildStudentProfileUrl(user.id);
+        const res = await fetchWithTimeout(profileUrl, { method: 'GET' });
+        if (!res.ok) {
+          if (!cancelled) setProfileError(await readResponseError(res));
+          return;
+        }
 
         const data: StudentProfileResponse = await res.json();
         if (cancelled) return;
@@ -204,7 +256,11 @@ export default function UserPage() {
         if (data.studyStatus) setStudyStatus(data.studyStatus);
       } catch (e) {
         // Không chặn UI nếu backend chưa bật endpoint
-        if (!cancelled) setProfileError('Không thể tải mục tiêu từ backend.');
+        if (e instanceof Error && e.name === 'AbortError') {
+          if (!cancelled) setProfileError('Không thể tải mục tiêu: request timeout.');
+        } else {
+          if (!cancelled) setProfileError('Không thể tải mục tiêu từ backend.');
+        }
       }
     })();
 
@@ -223,7 +279,6 @@ export default function UserPage() {
 
       if (targetScore !== null && (!Number.isFinite(targetScore) || targetScore < 0 || targetScore > 100)) {
         setProfileError('Mục tiêu điểm phải là số trong khoảng 0–100.');
-        setIsSavingProfile(false);
         return;
       }
 
@@ -232,15 +287,16 @@ export default function UserPage() {
         goalText: goalTextInput,
       };
 
-      const res = await fetch(`${API_BASE_URL}/student-profile/${user.id}`, {
+      const profileUrl = buildStudentProfileUrl(user.id);
+
+      const res = await fetchWithTimeout(profileUrl, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        setProfileError('Không thể lưu mục tiêu lên backend.');
-        setIsSavingProfile(false);
+        setProfileError(await readResponseError(res));
         return;
       }
 
@@ -249,7 +305,11 @@ export default function UserPage() {
       if (typeof data.goalText === 'string') setGoalTextInput(data.goalText);
       setStudyStatus(data.studyStatus ?? null);
     } catch (e) {
-      setProfileError('Không thể lưu mục tiêu. Vui lòng thử lại.');
+      if (e instanceof Error && e.name === 'AbortError') {
+        setProfileError('Không thể lưu mục tiêu: request timeout. Vui lòng thử lại.');
+      } else {
+        setProfileError('Không thể lưu mục tiêu. Vui lòng thử lại.');
+      }
     } finally {
       setIsSavingProfile(false);
     }
