@@ -11,16 +11,6 @@ class ConversationTurn(BaseModel):
     content: str
 
 class ChatInputSchema(BaseModel):
-    userId: Optional[str] = None
-    targetScore: Optional[float] = Field(
-        default=None, description="Mục tiêu điểm mà học sinh mong muốn đạt"
-    )
-    skillLevel: Optional[str] = Field(
-        default=None, description="Đánh giá năng lực tổng quan của học sinh"
-    )
-    goalText: Optional[str] = Field(
-        default=None, description="Mục tiêu học tập mô tả chi tiết của học sinh"
-    )
     message: str
     history: List[ConversationTurn] = Field(default_factory=list)
     media: Optional[List[MediaPart]] = None

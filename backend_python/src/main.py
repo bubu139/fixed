@@ -3,34 +3,23 @@ import re
 import uvicorn
 import json
 import os
-import time
-import hashlib
-from functools import lru_cache
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException
 from src.routes.node_progress import router as node_progress_router
-from src.routes.video import router as video_router
-from src.routes.student_profile import router as student_profile_router
-from src.routes.adaptive_test import router as adaptive_test_router
-from src.routes.learning_assistant import router as learning_router
-
-from src.db import init_db
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import List, Literal, Optional
+import PyPDF2
+from docx import Document
 from src.models import NodeProgress
 from src.supabase_client import supabase
-from src.utils.file_utils import extract_text_from_file
 
 # Import config
 from src.ai_config import genai
-from src.ai_flows.chat_flow import run_chat_turn
+from src.ai_flows.chat_flow import chat as chat_flow
 from src.ai_schemas.chat_schema import ChatInputSchema
 from src.services import rag_service
-from src.services import audio_service
-import aiofiles
-
+from src.routes import student_profile
 
 
 app = FastAPI()
@@ -45,14 +34,47 @@ app.add_middleware(
 
 # Thêm router node progress
 app.include_router(node_progress_router)
-app.include_router(video_router)
-app.include_router(student_profile_router)
-app.include_router(adaptive_test_router)
-app.include_router(learning_router)
+app.include_router(student_profile.router)
 
-@app.on_event("startup")
-def on_startup() -> None:
-    init_db()
+# ===== DOCUMENT PROCESSING =====
+
+def extract_text_from_pdf(pdf_path: str) -> str:
+    """Extract text from a PDF file"""
+    try:
+        with open(pdf_path, 'rb') as file:
+            pdf_reader = PyPDF2.PdfReader(file)
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+        return text
+    except Exception as e:
+        print(f"Error reading PDF {pdf_path}: {e}")
+        return ""
+
+def extract_text_from_word(docx_path: str) -> str:
+    """Extract text from a Word (.docx) file"""
+    try:
+        doc = Document(docx_path)
+        text = ""
+        for paragraph in doc.paragraphs:
+            text += paragraph.text + "\n"
+        return text
+    except Exception as e:
+        print(f"Error reading Word file {docx_path}: {e}")
+        return ""
+
+def extract_text_from_file(file_path: str) -> str:
+    """Extract text from PDF or Word file based on extension"""
+    file_path_obj = Path(file_path)
+    extension = file_path_obj.suffix.lower()
+    
+    if extension == '.pdf':
+        return extract_text_from_pdf(file_path)
+    elif extension in ['.docx', '.doc']:
+        return extract_text_from_word(file_path)
+    else:
+        print(f"Unsupported file format: {extension}")
+        return ""
 
 def load_reference_materials(folder_path: str, max_files: int = 5) -> str:
     """Load and combine text from multiple PDF/Word files in a folder"""
@@ -78,23 +100,8 @@ def load_reference_materials(folder_path: str, max_files: int = 5) -> str:
         text = extract_text_from_file(str(file))
         if text:
             combined_text += f"\n\n=== TÀI LIỆU: {file.name} ===\n{text}\n"
-
+    
     return combined_text
-
-
-@lru_cache(maxsize=32)
-def load_reference_materials_cached(folder_path: str, max_files: int = 5) -> str:
-    """Cached wrapper for reference material loading."""
-    return load_reference_materials(folder_path, max_files)
-
-
-# ===== IN-MEMORY CACHES =====
-_EXERCISE_CACHE: Dict[str, Tuple[float, Any]] = {}
-_TEST_CACHE: Dict[str, Tuple[float, Any]] = {}
-_PROFILE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-_PROFILE_CACHE_TTL = 300
-_EXPLANATION_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
-_EXPLANATION_CACHE_TTL = 600
 
 # ===== PATHS CONFIGURATION =====
 
@@ -286,34 +293,6 @@ YÊU CẦU:
 4. Luôn trả về JSON hợp lệ (không markdown, không giải thích ngoài).
 """
 
-
-@lru_cache(maxsize=1)
-def _chat_system_prompt() -> str:
-    """Combine system instruction + blueprint once to reduce repeated prompt tokens."""
-    return f"{CHAT_SYSTEM_INSTRUCTION}\n\n{CHAT_RESPONSE_BLUEPRINT}"
-
-
-@lru_cache(maxsize=1)
-def _chat_generation_config() -> Dict[str, Any]:
-    """Return cached generation config for chat requests."""
-    return {
-        "temperature": 0.7,
-        "top_p": 0.95,
-        "top_k": 40,
-        "max_output_tokens": 8192,
-        "response_mime_type": "application/json",
-    }
-
-
-@lru_cache(maxsize=1)
-def _chat_model() -> genai.GenerativeModel:
-    """Cached Gemini model so the prompt is only sent once per process."""
-    return genai.GenerativeModel(
-        "gemini-2.5-flash",
-        generation_config=_chat_generation_config(),
-        system_instruction=_chat_system_prompt(),
-    )
-
 GEOGEBRA_SYSTEM_INSTRUCTION = """Bạn là một chuyên gia GeoGebra, chuyên chuyển đổi mô tả bằng ngôn ngữ tự nhiên thành các lệnh GeoGebra hợp lệ.
 
 🎯 NHIỆM VỤ:
@@ -377,11 +356,7 @@ SUMMARIZE_SYSTEM_INSTRUCTION = """Bạn là một giảng viên toán học chuy
 
 app = FastAPI(title="Math Tutor API")
 app.include_router(node_progress_router)
-app.include_router(video_router)
-app.include_router(student_profile_router)
-app.include_router(adaptive_test_router)
-app.include_router(learning_router)
-
+app.include_router(student_profile.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -443,9 +418,6 @@ class GeogebraInstruction(BaseModel):
 
 class ChatInputSchema(BaseModel):
     userId: Optional[str] = None
-    targetScore: Optional[float] = None
-    skillLevel: Optional[str] = None
-    goalText: Optional[str] = None
     message: str
     history: List[ConversationTurn] = Field(default_factory=list)
     media: Optional[List[MediaPart]] = None
@@ -493,16 +465,6 @@ class GenerateTestInput(BaseModel):
     difficulty: str = "medium"
     testType: str = "standard"  # Thêm trường này (node, standard, thptqg)
     numQuestions: int = 5       # Thêm trường này
-
-
-class ExplainQuestionInput(BaseModel):
-    userId: Optional[str] = None
-    questionId: str
-    prompt: str
-    questionType: str
-    correctAnswer: Any
-    userAnswer: Optional[Any] = None
-    topic: Optional[str] = None
 # ===== HELPER FUNCTIONS =====
 
 def evaluate_node_status(score: float, has_opened: bool) -> str:
@@ -519,32 +481,6 @@ def evaluate_node_status(score: float, has_opened: bool) -> str:
         return "mastered"
 
     return "learning"
-
-
-def _exercise_cache_key(user_id: Optional[str], topic: str, difficulty: str, count: int) -> str:
-    """Build cache key for exercise generation."""
-    return f"{user_id or 'anon'}::{topic}::{difficulty}::{count}"
-
-
-def _test_cache_key(user_id: Optional[str], topic: str, difficulty: str, testType: str, numQuestions: int) -> str:
-    """Build cache key for test generation."""
-    return f"{user_id or 'anon'}::{topic}::{difficulty}::{testType}::{numQuestions}"
-
-
-def _explanation_cache_key(user_id: Optional[str], question_id: str, prompt: str, correct_answer: Any, topic: Optional[str]) -> str:
-    """Build a stable cache key for per-question explanations."""
-    raw = json.dumps(
-        {
-            "user": user_id or "anon",
-            "qid": question_id,
-            "prompt": prompt,
-            "answer": correct_answer,
-            "topic": topic or "",
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-    )
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 # --- SỬA LỖI: HÀM DỌN DẸP JSON ---
 def clean_json_response(raw_text: str) -> str:
@@ -618,109 +554,124 @@ async def root():
 # The `genai.configure` is already done globally.
 
 # --- SỬA LỖI 1: TỐI ƯU HÓA TỐC ĐỘ CHAT ---
-async def _load_student_profile(user_id: str) -> Tuple[str, Dict[str, Any]]:
-    """Load hồ sơ và hiệu suất học sinh với cache TTL để giảm truy vấn."""
-    now = time.time()
-    cached = _PROFILE_CACHE.get(user_id)
-    if cached and now - cached[0] < _PROFILE_CACHE_TTL:
-        return cached[1].get("context", ""), cached[1]
-
-    profile_data: Dict[str, Any] = {}
-    context_lines: List[str] = []
-
-    try:
-        prof_res = (
-            supabase.from_("student_profiles")
-            .select("target_score,goal_text,skill_level")
-            .eq("user_id", user_id)
-            .execute()
-        )
-        prof = prof_res.data[0] if prof_res.data else {}
-        profile_data.update({
-            "target_score": prof.get("target_score"),
-            "goal_text": prof.get("goal_text"),
-            "skill_level": prof.get("skill_level"),
-        })
-
-        perf_res = (
-            supabase.from_("user_performance_summary")
-            .select("average_score,completion_rate,total_tests")
-            .eq("user_id", user_id)
-            .execute()
-        )
-        perf = perf_res.data[0] if perf_res.data else {}
-        profile_data.update({
-            "average_score": perf.get("average_score"),
-            "completion_rate": perf.get("completion_rate"),
-            "total_tests": perf.get("total_tests"),
-        })
-
-        target = profile_data.get("target_score")
-        goal_text = profile_data.get("goal_text")
-        avg = profile_data.get("average_score")
-        completion_rate = profile_data.get("completion_rate")
-
-        completion_pct = None
-        if completion_rate is not None:
-            completion_pct = round(completion_rate * 100, 1) if completion_rate <= 1 else round(completion_rate, 1)
-
-        context_lines = [
-            f"- Mục tiêu điểm: {target if target is not None else 'Chưa đặt'}",
-            f"- Điểm trung bình: {round(avg,1) if avg is not None else 'Chưa có dữ liệu'}",
-            f"- Tỷ lệ hoàn thành: {completion_pct if completion_pct is not None else 'Chưa có dữ liệu'}%",
-            f"- Mục tiêu học tập: {goal_text or 'Chưa cập nhật'}",
-        ]
-
-    except Exception as e:
-        print(f"⚠️ Could not load student profile context: {e}")
-
-    context_text = "\n".join(context_lines)
-    profile_data["context"] = context_text
-    _PROFILE_CACHE[user_id] = (now, profile_data)
-    return context_text, profile_data
-
-
-async def _build_rag_context(message: str, user_id: Optional[str]) -> str:
-    """Ghép ngữ cảnh RAG theo tài liệu gần nhất."""
-    try:
-        docs = await rag_service.search_similar_documents(message, user_id, purpose="chat", top_k=6)
-    except Exception as exc:  # pragma: no cover
-        print(f"RAG search failed: {exc}")
-        return ""
-
-    if not docs:
-        return ""
-
-    snippets = []
-    for doc in docs:
-        title = doc.get("title") or "Tài liệu"
-        content = (doc.get("content") or "")[:180]
-        snippets.append(f"{title}: {content}")
-
-    return "\n".join(snippets)
-
-
 @app.post("/api/chat")
 async def handle_chat(request: ChatInputSchema):
     """Handle chat using a persistent ChatSession for speed."""
     try:
-        student_context = ""
-        profile_data: Dict[str, Any] = {}
-        if request.userId:
-            student_context, profile_data = await _load_student_profile(request.userId)
-            request.targetScore = request.targetScore or profile_data.get("target_score")
-            request.skillLevel = request.skillLevel or profile_data.get("skill_level")
-            request.goalText = request.goalText or profile_data.get("goal_text")
+        generation_config = {
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "top_k": 40,
+            "max_output_tokens": 8192,
+            "response_mime_type": "application/json",
+        }
 
-        context_text = await _build_rag_context(request.message, request.userId)
+        # 1) Xây dựng lại lịch sử cho Gemini ChatSession
+        gemini_history = []
+        gemini_history = []
+        for turn in request.history:
+            if not turn.content:
+                continue
+            mapped_role = "user" if turn.role == "user" else "model"
+            gemini_history.append(
+                {
+                    "role": mapped_role,
+                    "parts": [{"text": turn.content}],
+                }
+            )
 
-        payload = await run_chat_turn(
-            request,
-            student_context=student_context,
-            rag_context=context_text,
+        # 2) Khởi tạo ChatSession với lịch sử đã có
+        #    Điều này cho phép model duy trì ngữ cảnh mà không cần gửi lại toàn bộ
+        #    OPTIMIZATION: Initialize model here or use cached one
+        model = genai.GenerativeModel(
+            "gemini-2.5-flash",
+            generation_config=generation_config,
+            system_instruction=CHAT_SYSTEM_INSTRUCTION,
         )
+        chat = model.start_chat(history=gemini_history)
 
-        return payload
+        # 3) Chuẩn bị nội dung tin nhắn MỚI
+        # RAG INTEGRATION
+        context_text = ""
+        if request.userId:
+            print(f"🔍 Searching documents for user {request.userId}...")
+            docs = await rag_service.search_similar_documents(request.message, request.userId, purpose="chat")
+            if docs:
+                context_text = "\n\n=== THÔNG TIN THAM KHẢO TỪ TÀI LIỆU CỦA BẠN ===\n"
+                for d in docs:
+                    context_text += f"- [{d['file_name']}]: {d['content']}\n"
+                context_text += "==============================================\n"
+                print(f"✅ Found {len(docs)} relevant chunks")
+
+        user_prompt = f"""{CHAT_RESPONSE_BLUEPRINT}\n\n{context_text}\nHọc sinh vừa hỏi: {request.message}"""
+        user_parts = [{"text": user_prompt}]
+
+        if request.media:
+            for media in request.media:
+                user_parts.append({"media": {"url": media.url}})
+
+        # 4) Gửi tin nhắn mới (async)
+        #    Model sẽ tự động nối lịch sử đã có với tin nhắn mới này
+        response = await chat.send_message_async(user_parts)
+
+        # Lấy raw text từ model
+        raw_text = response.text if hasattr(response, "text") else None
+        if not raw_text:
+            raise ValueError("Model không trả về phản hồi")
+
+        # Mặc định: không mindmap, không vẽ geogebra
+        mindmap_data = []
+        normalized_geogebra = {
+            "should_draw": False,
+            "reason": "",
+            "prompt": request.message,
+            "commands": [],
+        }
+
+        # ===================== TRY PARSE JSON =====================
+        try:
+            # SỬA LỖI: Sử dụng hàm dọn dẹp JSON
+            json_candidate = clean_json_response(raw_text)
+            
+            if not json_candidate:
+                raise ValueError("Không tìm thấy JSON hợp lệ trong phản hồi")
+
+            payload = json.loads(json_candidate)
+
+            # Nếu parse được JSON, ưu tiên lấy reply trong JSON
+            reply_text = (
+                payload.get("reply")
+                or payload.get("message")
+                or extract_reply_only(raw_text)
+            )
+
+            # mindmap_insights nếu là list thì dùng, không thì bỏ qua
+            md = payload.get("mindmap_insights")
+            if isinstance(md, list):
+                mindmap_data = md
+
+            # geogebra nếu có cấu trúc đúng thì dùng cho luồng GeoGebra
+            geogebra_block = payload.get("geogebra") or {}
+            normalized_geogebra = {
+                "should_draw": bool(geogebra_block.get("should_draw")),
+                "reason": geogebra_block.get("reason") or "",
+                "prompt": geogebra_block.get("prompt") or request.message,
+                "commands": geogebra_block.get("commands")
+                if isinstance(geogebra_block.get("commands"), list)
+                else [],
+            }
+
+        except Exception as e:
+            # JSON hỏng -> chỉ lấy phần reply, bỏ mindmap & geogebra
+            print(f"JSON parse failed, fallback to reply-only: {e}")
+            reply_text = extract_reply_only(raw_text)
+
+        # Trả response về frontend: chat chỉ dùng field "reply"
+        return {
+            "reply": reply_text,
+            "mindmap_insights": mindmap_data,
+            "geogebra": normalized_geogebra,
+        }
 
     except Exception as e:
         print(f"Chat error: {e}")
@@ -764,25 +715,18 @@ async def handle_generate_exercises(request: GenerateExercisesInput):
     """Generate math exercises based on topic"""
     try:
         print(f"📚 Generating exercises for topic: {request.topic}")
-
-        # In-memory cache with TTL 600s
-        cache_key = _exercise_cache_key(request.userId, request.topic, request.difficulty, request.count)
-        now = time.time()
-        cached = _EXERCISE_CACHE.get(cache_key)
-        if cached and now - cached[0] < 600:
-            return cached[1]
-
+        
         # RAG Integration
         context_text = ""
         if request.userId:
-            docs = await rag_service.search_similar_documents(request.topic, request.userId, purpose="test") # Use test materials
-            if docs:
+             docs = await rag_service.search_similar_documents(request.topic, request.userId, purpose="test") # Use test materials
+             if docs:
                 context_text = "\n\n=== TÀI LIỆU THAM KHẢO ===\n"
                 for d in docs:
                     context_text += f"- {d['content']}\n"
         
         # Fallback to local files if no RAG results (optional, or keep both)
-        reference_text = load_reference_materials_cached(str(EXERCISES_FOLDER), max_files=3)
+        reference_text = load_reference_materials(str(EXERCISES_FOLDER), max_files=3)
         
         generation_config = {
             "temperature": 0.7,
@@ -832,68 +776,14 @@ YÊU CẦU:
         
         exercises_text = response.text.strip()
         
-        # Cache result
-        _EXERCISE_CACHE[cache_key] = (now, exercises_text)
-        
-        return exercises_text
-
-    except Exception as e:
-        print(f"Error generating exercises: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/stt")
-async def stt_endpoint(file: UploadFile = File(...)):
-    try:
-        content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="File âm thanh trống hoặc không hợp lệ.")
-
-        # Save temp file
-        temp_filename = f"temp_{int(time.time())}_{file.filename}"
-        async with aiofiles.open(temp_filename, 'wb') as out_file:
-            await out_file.write(content)
-        text = await audio_service.transcribe_audio(
-            temp_filename,
-            mime_type=file.content_type or "audio/webm",
-        )
-
-        if not text:
-            raise HTTPException(status_code=422, detail="Không thể nhận diện nội dung giọng nói.")
-        
-        # Cleanup
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
-        
-        return {"text": text}
-    except Exception as e:
-        print(f"STT Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-class TTSInput(BaseModel):
-    text: str
-
-@app.post("/api/tts")
-async def tts_endpoint(input: TTSInput):
-    try:
-        output_filename = f"tts_{int(time.time())}.mp3"
-        await audio_service.generate_audio(input.text, output_filename)
-        
-        # Note: FileResponse will stream the file. 
-        # We might want to clean it up later, but for now let's keep it simple.
-        # A background task could clean up old files.
-        return FileResponse(output_filename, media_type="audio/mpeg", filename="response.mp3")
-    except Exception as e:
-        print(f"TTS Error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-        
         if not exercises_text:
             raise ValueError("Model trả về nội dung trống")
-
+        
         print(f"✅ Generated exercises: {len(exercises_text)} characters")
-        response_payload = {"exercises": exercises_text}
-        _EXERCISE_CACHE[cache_key] = (now, response_payload)
-
-        return response_payload
+        
+        return {
+            "exercises": exercises_text
+        }
         
     except Exception as e:
         print(f"❌ Generate exercises error: {e}")
@@ -1103,12 +993,7 @@ async def handle_generate_test(request: GenerateTestInput):
     """Generate a test based on PDF/Word reference materials"""
     try:
         print(f"📝 Loading test reference materials for topic: {request.topic}")
-        cache_key = _test_cache_key(request.userId, request.topic, request.difficulty, request.testType, request.numQuestions)
-        now = time.time()
-        cached = _TEST_CACHE.get(cache_key)
-        if cached and now - cached[0] < 900:
-            return cached[1]
-        reference_text = load_reference_materials_cached(str(TESTS_FOLDER), max_files=3)
+        reference_text = load_reference_materials(str(TESTS_FOLDER), max_files=3)
 
         generation_config = {
             "temperature": 0.6,
@@ -1166,16 +1051,12 @@ json ...
         if "parts" not in result or "multipleChoice" not in result["parts"]:
             raise HTTPException(status_code=500, detail="Dữ liệu đề thi thiếu cấu trúc 'parts' hoặc 'multipleChoice'")
 
-        response_payload = {
+        return {
             "topic": request.topic,
             "difficulty": request.difficulty,
             "has_reference": bool(reference_text),
             "test": result
         }
-
-        _TEST_CACHE[cache_key] = (now, response_payload)
-
-        return response_payload
 
     except HTTPException:
         raise
@@ -1191,105 +1072,6 @@ json ...
                 detail="API Google đang quá tải. Vui lòng đợi 1-2 phút rồi thử lại."
             )
 
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/explain-question")
-async def explain_question(request: ExplainQuestionInput):
-    """Generate a step-by-step solution and explanation for a given question."""
-    try:
-        cache_key = _explanation_cache_key(
-            request.userId,
-            request.questionId,
-            request.prompt,
-            request.correctAnswer,
-            request.topic,
-        )
-        now = time.time()
-        cached = _EXPLANATION_CACHE.get(cache_key)
-        if cached and now - cached[0] < _EXPLANATION_CACHE_TTL:
-            return cached[1]
-
-        rag_docs = await rag_service.search_similar_documents(
-            request.prompt,
-            request.userId,
-            purpose="test",
-            top_k=5,
-        )
-        rag_context = "\n".join(
-            f"- {doc.get('content', '')}" for doc in rag_docs if doc.get("content")
-        )
-
-        generation_config = {
-            "temperature": 0.35,
-            "response_mime_type": "application/json",
-        }
-
-        model = genai.GenerativeModel(
-            "gemini-2.5-flash",
-            generation_config=generation_config,
-            system_instruction=(
-                "Bạn là trợ lý giải bài tập Toán THPT. Luôn kiểm tra dữ liệu RAG và chỉ trả lời khi chắc chắn. "
-                "Ưu tiên dẫn nguồn uy tín như toanmath.com và sách giáo khoa."
-            ),
-        )
-
-        prompt = f"""
-Câu hỏi cần giải thích:
-- Chủ đề: {request.topic or 'Không cung cấp'}
-- Loại câu hỏi: {request.questionType}
-- Đề bài: {request.prompt}
-- Đáp án đúng: {request.correctAnswer}
-- Câu trả lời học sinh: {request.userAnswer or 'Chưa trả lời'}
-
-Ngữ cảnh RAG (đã cắt ghép, ưu tiên tài liệu uy tín):
-{rag_context or 'Không có tài liệu RAG. Hãy dùng kiến thức chuẩn và cảnh báo nếu thiếu dẫn chứng.'}
-
-YÊU CẦU:
-1) Trình bày lời giải từng bước (solution) bằng tiếng Việt, có thể dùng LaTeX trong chuỗi.
-2) Viết phần explanation ngắn gọn: nêu ý tưởng chính, lỗi học sinh (nếu có), và cách kiểm tra lại kết quả.
-3) Gợi ý tối đa 3 đường link tham khảo uy tín (references) như https://toanmath.com, https://vietjack.com nếu cần.
-4) Đảm bảo đúng đáp án và logic; nếu thiếu dữ liệu hãy ghi rõ trong explanation.
-
-Trả về JSON thuần: {{
-  "solution": "...",
-  "explanation": "...",
-  "references": ["https://..."]
-}}
-"""
-
-        response = model.generate_content(prompt)
-        raw = response.text
-
-        try:
-            cleaned = clean_json_response(raw)
-            data = json.loads(cleaned)
-        except Exception as parse_error:
-            print(f"❌ Explain question parse error: {parse_error}")
-            raise HTTPException(status_code=500, detail="AI trả về lời giải không hợp lệ")
-
-        payload = {
-            "solution": data.get("solution") or data.get("answer") or "",
-            "explanation": data.get("explanation") or data.get("analysis") or "",
-            "references": data.get("references") or [],
-        }
-
-        if not payload["references"] and rag_docs:
-            fallback_refs = []
-            for doc in rag_docs:
-                source = doc.get("source_url") or doc.get("source") or doc.get("title")
-                if source:
-                    fallback_refs.append(source)
-                if len(fallback_refs) >= 3:
-                    break
-            payload["references"] = fallback_refs
-
-        _EXPLANATION_CACHE[cache_key] = (now, payload)
-        return payload
-    except HTTPException:
-        raise
-    except Exception as e:
-        print(f"❌ Explain question error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1587,4 +1369,3 @@ if __name__ == "__main__":
     
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
-

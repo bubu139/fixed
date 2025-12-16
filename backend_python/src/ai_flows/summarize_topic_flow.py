@@ -1,47 +1,28 @@
 # src/ai_flows/summarize_topic_flow.py
-import google.generativeai as genai
-from pydantic import BaseModel
-from typing import Literal
+import genkit.ai as ai
+from genkit import flow
+from pydantic import BaseModel, Field
 
-from ..ai_config import GOOGLE_API_KEY
-
-MODEL_NAME = "gemini-2.5-flash"
+MODEL = "gemini-2.5-flash"
 
 class SummarizeTopicInput(BaseModel):
-    topic: str
-    detail_level: str = "medium" # 'brief', 'medium', 'detailed'
+  topic: str = Field(description='The topic to summarize.')
 
 class SummarizeTopicOutput(BaseModel):
-    summary: str
+  summary: str = Field(description='The summary of the topic.')
 
-SYSTEM_PROMPT = """Bạn là giáo viên Toán 12 giỏi tóm tắt kiến thức.
-Nhiệm vụ: Tóm tắt lý thuyết, công thức trọng tâm một cách súc tích.
-Format: Markdown, dùng bullet points và LaTeX."""
+@ai.prompt
+def summarize_topic_prompt(input: SummarizeTopicInput) -> ai.Prompt[SummarizeTopicOutput]:
+    prompt_text = f"""Bạn là một chuyên gia tóm tắt kiến thức toán học. Hãy tóm tắt chủ đề sau một cách ngắn gọn, súc tích và dễ hiểu, sử dụng các gạch đầu dòng và công thức LaTeX khi cần thiết.
 
-async def summarize_topic(input: SummarizeTopicInput) -> SummarizeTopicOutput:
-    generation_config = {
-        "temperature": 0.5,
-    }
-    
-    model = genai.GenerativeModel(
-        model_name=MODEL_NAME,
-        generation_config=generation_config,
-        system_instruction=SYSTEM_PROMPT
+Chủ đề: {input.topic}
+"""
+    return ai.Prompt(
+        prompt_text,
+        config=ai.GenerationConfig(model=MODEL, response_format=ai.ResponseFormat.JSON)
     )
 
-    prompt = f"""
-    Tóm tắt chủ đề: {input.topic}
-    Mức độ chi tiết: {input.detail_level}
-    
-    Yêu cầu:
-    - Định nghĩa ngắn gọn.
-    - Các công thức quan trọng nhất.
-    - Một ví dụ minh hoạ nhỏ (nếu cần).
-    """
-
-    try:
-        response = await model.generate_content_async(prompt)
-        return SummarizeTopicOutput(summary=response.text)
-    except Exception as e:
-        print(f"❌ Error summarizing: {e}")
-        return SummarizeTopicOutput(summary="Không thể tóm tắt nội dung này.")
+@flow
+async def summarize_topic(input: SummarizeTopicInput) -> SummarizeTopicOutput:
+    response = await summarize_topic_prompt.generate(input=input)
+    return response.output

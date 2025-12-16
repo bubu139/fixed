@@ -1,54 +1,27 @@
 # src/ai_flows/generate_exercises_flow.py
-import google.generativeai as genai
+import genkit.ai as ai
+from genkit import flow
 from pydantic import BaseModel, Field
-from typing import Optional
 
-# Import config
-from ..ai_config import GOOGLE_API_KEY
-
-MODEL_NAME = "gemini-2.5-flash"
+MODEL = "gemini-2.5-flash"
 
 class GenerateExercisesInput(BaseModel):
-    topic: str
-    difficulty: str = "medium"
-    count: int = 3
-    userId: Optional[str] = None
+    topic: str = Field(description='The topic to generate exercises for.')
 
 class GenerateExercisesOutput(BaseModel):
-    content: str
+    exercises: str = Field(description='The generated exercises in Markdown format.')
 
-SYSTEM_PROMPT = """Bạn là chuyên gia biên soạn bài tập toán THPT lớp 12.
-Nhiệm vụ: Tạo các bài tập tự luyện có lời giải chi tiết.
-Format: Markdown, dùng LaTeX cho công thức toán."""
+@ai.prompt
+def generate_exercises_prompt(input: GenerateExercisesInput) -> ai.Prompt[GenerateExercisesOutput]:
+    prompt_text = f"""Bạn là một AI tạo bài tập toán học. Hãy tạo 3 bài tập tự luận (kèm đáp án chi tiết) về chủ đề sau. Sử dụng công thức LaTeX.
 
-async def generate_exercises(input: GenerateExercisesInput) -> GenerateExercisesOutput:
-    generation_config = {
-        "temperature": 0.7,
-        # Không dùng JSON mode vì muốn format Markdown tự nhiên
-    }
-    
-    model = genai.GenerativeModel(
-        model_name=MODEL_NAME,
-        generation_config=generation_config,
-        system_instruction=SYSTEM_PROMPT
+Chủ đề: {input.topic}"""
+    return ai.Prompt(
+        prompt_text,
+        config=ai.GenerationConfig(model=MODEL, response_format=ai.ResponseFormat.JSON)
     )
 
-    prompt = f"""
-    Tạo {input.count} bài tập về chủ đề: "{input.topic}"
-    Độ khó: {input.difficulty}
-    
-    Yêu cầu định dạng:
-    ## Bài 1
-    **Đề bài:** ...
-    **Lời giải:** ...
-    **Đáp án:** ...
-    
-    (Lặp lại cho các bài tiếp theo)
-    """
-
-    try:
-        response = await model.generate_content_async(prompt)
-        return GenerateExercisesOutput(content=response.text)
-    except Exception as e:
-        print(f"❌ Error generating exercises: {e}")
-        return GenerateExercisesOutput(content="Xin lỗi, không thể tạo bài tập lúc này.")
+@flow
+async def generate_exercises(input: GenerateExercisesInput) -> GenerateExercisesOutput:
+    response = await generate_exercises_prompt.generate(input=input)
+    return response.output
